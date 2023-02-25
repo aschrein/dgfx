@@ -1,0 +1,7 @@
+*.blend
+*.blend1
+build/
+*~
+*.pfm
+*.dot
+*.svg

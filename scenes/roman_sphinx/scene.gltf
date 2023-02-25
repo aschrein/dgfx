@@ -1,0 +1,137 @@
+{
+    "asset" : {
+        "generator" : "Khronos glTF Blender I/O v3.4.50",
+        "version" : "2.0"
+    },
+    "scene" : 0,
+    "scenes" : [
+        {
+            "name" : "Scene",
+            "nodes" : [
+                3
+            ]
+        }
+    ],
+    "nodes" : [
+        {
+            "mesh" : 0,
+            "name" : "Object_11"
+        },
+        {
+            "children" : [
+                0
+            ],
+            "name" : "Object_2"
+        },
+        {
+            "children" : [
+                1
+            ],
+            "name" : "roman sphinx_export_01.OBJ.cleaner.gles",
+            "translation" : [
+                -1.4792166948318481,
+                -1.7098519802093506,
+                -1.1929433345794678
+            ]
+        },
+        {
+            "children" : [
+                2
+            ],
+            "name" : "Sketchfab_model",
+            "rotation" : [
+                -0.70710688829422,
+                0,
+                0,
+                0.7071066498756409
+            ]
+        }
+    ],
+    "materials" : [
+        {
+            "doubleSided" : true,
+            "name" : "material_0.001",
+            "pbrMetallicRoughness" : {
+                "baseColorFactor" : [
+                    0.16202937066555023,
+                    0.18116424977779388,
+                    0.24228112399578094,
+                    1
+                ],
+                "metallicFactor" : 0.23999999463558197,
+                "roughnessFactor" : 0.5899999737739563
+            }
+        }
+    ],
+    "meshes" : [
+        {
+            "name" : "Object_8.001",
+            "primitives" : [
+                {
+                    "attributes" : {
+                        "POSITION" : 0,
+                        "NORMAL" : 1
+                    },
+                    "indices" : 2,
+                    "material" : 0
+                }
+            ]
+        }
+    ],
+    "accessors" : [
+        {
+            "bufferView" : 0,
+            "componentType" : 5126,
+            "count" : 427599,
+            "max" : [
+                2.071767807006836,
+                4.568408012390137,
+                2.610930919647217
+            ],
+            "min" : [
+                -1.1920928955078125e-07,
+                0,
+                0
+            ],
+            "type" : "VEC3"
+        },
+        {
+            "bufferView" : 1,
+            "componentType" : 5126,
+            "count" : 427599,
+            "type" : "VEC3"
+        },
+        {
+            "bufferView" : 2,
+            "componentType" : 5125,
+            "count" : 2476914,
+            "type" : "SCALAR"
+        }
+    ],
+    "bufferViews" : [
+        {
+            "buffer" : 0,
+            "byteLength" : 5131188,
+            "byteOffset" : 0,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 5131188,
+            "byteOffset" : 5131188,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 9907656,
+            "byteOffset" : 10262376,
+            "target" : 34963
+        }
+    ],
+    "buffers" : [
+        {
+            "byteLength" : 20170032,
+            "uri" : "scene.bin"
+        }
+    ]
+}

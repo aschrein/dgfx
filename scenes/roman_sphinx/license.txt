@@ -1,0 +1,11 @@
+Model Information:
+* title:	Roman Sphinx
+* source:	https://sketchfab.com/3d-models/roman-sphinx-9ff6160ad7b5470fbc4e3d52a375b4b8
+* author:	tony-eight (https://sketchfab.com/tony-eight)
+
+Model License:
+* license type:	CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
+* requirements:	Author must be credited. No commercial use.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Roman Sphinx" (https://sketchfab.com/3d-models/roman-sphinx-9ff6160ad7b5470fbc4e3d52a375b4b8) by tony-eight (https://sketchfab.com/tony-eight) licensed under CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)

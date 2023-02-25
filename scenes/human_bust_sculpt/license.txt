@@ -1,0 +1,11 @@
+Model Information:
+* title:	human bust sculpt
+* source:	https://sketchfab.com/3d-models/human-bust-sculpt-78b89c5ed16e42c38b732cef7ff1827e
+* author:	Derlich (https://sketchfab.com/derlich)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "human bust sculpt" (https://sketchfab.com/3d-models/human-bust-sculpt-78b89c5ed16e42c38b732cef7ff1827e) by Derlich (https://sketchfab.com/derlich) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

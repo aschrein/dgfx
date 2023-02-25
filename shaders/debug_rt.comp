@@ -1,0 +1,118 @@
+// MIT License
+//
+// Copyright (c) 2023 Anton Schreiner
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#include "common.h"
+#include "gpu_scene.hlsli"
+
+RaytracingAccelerationStructure g_tlas;
+RWTexture2D<f32x4>              g_output;
+Texture2D<f32x2>                g_noise_texture;
+Texture2D<u32x4>                g_visibility_buffer;
+
+f32x3 g_camera_pos;
+f32x3 g_camera_look;
+f32x3 g_camera_up;
+f32x3 g_camera_right;
+f32   g_camera_fov;
+f32   g_camera_aspect;
+
+f32x2 SampleBakedNoise(u32x2 pixel, i32 noise_offset = i32(0)) {
+    f32x2 xi = g_noise_texture[pixel.xy & u32(127)].xy;
+    // xi       = f32x2(fmod(xi.x + f32((u32(pixel.x / u32(128)) + noise_offset) & u32(0xff)) * GOLDEN_RATIO, f32(1.0)),
+    //                  fmod(xi.y + f32((u32(pixel.y / u32(128)) + noise_offset) & u32(0xff)) * GOLDEN_RATIO, f32(1.0)));
+    return xi;
+}
+
+Ray GenRay(f32x2 uv) {
+    uv         = uv * f32x2(2.0, -2.0) - f32x2(1.0, -1.0);
+    Ray r      = (Ray)0;
+    r.o        = g_camera_pos;
+    f32 aspect = f32(1.0);
+    r.d        = normalize(g_camera_look + tan(g_camera_fov * f32(0.5)) * (g_camera_right * uv.x * g_camera_aspect + g_camera_up * uv.y));
+    return r;
+}
+
+bool RayTest(Ray r) {
+    RayDesc ray_desc   = (RayDesc)0;
+    ray_desc.Direction = r.d;
+    ray_desc.Origin    = r.o;
+    ray_desc.TMin      = f32(1.0e-3);
+    ray_desc.TMax      = f32(1.0e6);
+    RayQuery<RAY_FLAG_CULL_NON_OPAQUE> ray_query;
+    ray_query.TraceRayInline(g_tlas, RAY_FLAG_NONE, 0xffu, ray_desc);
+    while (ray_query.Proceed()) {
+        break;
+    }
+    if (ray_query.CommittedStatus() == COMMITTED_NOTHING) return false;
+    return true;
+}
+
+// clang-format off
+[numthreads(8, 8, 1)]
+void trace_primary(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+
+    u32x2 dims;
+    g_output.GetDimensions(dims.x, dims.y);
+    if (any(tid.xy >= dims.xy)) return;
+
+    u32x4 visibility = g_visibility_buffer[tid.xy];
+
+    if (all(visibility == u32x4_splat(0))) {
+        g_output[tid.xy] = f32x4_splat(0.0);
+        return;
+    }
+
+    f32x2 barys = asf32(visibility.xy);
+    // f32x3 barys         = f32x3(f32(1.0) - _barys.x - _barys.y, _barys.x, _barys.y);
+    u32 instance_idx = visibility.z;
+    // bool is_front_face = ((visibility.z >> uint(31)) & uint(1)) != uint(0);
+    u32 primitive_idx = visibility.w;
+
+    Instance instance  = g_InstanceBuffer[instance_idx];
+    Mesh     mesh      = g_MeshBuffer[instance.mesh_id];
+    f32x4x4  transform = g_TransformBuffer[instance_idx];
+
+    u32    i0  = g_IndexBuffer[mesh.first_index + primitive_idx * u32(3) + u32(0)] + mesh.base_vertex;
+    u32    i1  = g_IndexBuffer[mesh.first_index + primitive_idx * u32(3) + u32(1)] + mesh.base_vertex;
+    u32    i2  = g_IndexBuffer[mesh.first_index + primitive_idx * u32(3) + u32(2)] + mesh.base_vertex;
+    Vertex v0  = g_VertexBuffer[i0];
+    Vertex v1  = g_VertexBuffer[i1];
+    Vertex v2  = g_VertexBuffer[i2];
+    f32x3  wv0 = mul(transform, f32x4(v0.position.xyz, f32(1.0))).xyz;
+    f32x3  wv1 = mul(transform, f32x4(v1.position.xyz, f32(1.0))).xyz;
+    f32x3  wv2 = mul(transform, f32x4(v2.position.xyz, f32(1.0))).xyz;
+    f32x3  wn0 = normalize(mul(transform, f32x4(v0.normal.xyz, f32(0.0))).xyz);
+    f32x3  wn1 = normalize(mul(transform, f32x4(v1.normal.xyz, f32(0.0))).xyz);
+    f32x3  wn2 = normalize(mul(transform, f32x4(v2.normal.xyz, f32(0.0))).xyz);
+
+    f32x3 w  = Interpolate(wv0, wv1, wv2, barys);
+    f32x3 n  = normalize(Interpolate(wn0, wn1, wn2, barys));
+    f32x2 xi = SampleBakedNoise(tid.xy);
+
+    Ray diffuse_ray = GenDiffuseRay(w, n, xi);
+
+    g_output[tid.xy] = f32x4((RayTest(diffuse_ray) ? f32(0.0) : f32(1.0)).xxx, 1.0);
+    // g_output[tid.xy] = f32x4(n * f32(0.5) + f32x3_splat(0.5), 1.0);
+    // g_output[tid.xy] = f32x4(abs(w), 1.0);
+    // g_output[tid.xy] = f32x4(barys.xy, 0.0, 1.0);
+}

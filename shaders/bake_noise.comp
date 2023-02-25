@@ -1,0 +1,67 @@
+// MIT License
+//
+// Copyright (c) 2023 Anton Schreiner
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#include "common.h"
+
+RWByteAddressBuffer g_sobol_buffer;
+RWByteAddressBuffer g_ranking_tile_buffer;
+RWByteAddressBuffer g_scrambling_tile_buffer;
+RWTexture2D<f32x2>  g_noise_texture;
+u32                 g_frame_index;
+
+// https://github.com/GPUOpen-Effects/FidelityFX-SSSR/blob/master/sample/src/Shaders/PrepareBlueNoiseTexture.hlsl
+// Blue Noise Sampler by Eric Heitz. Returns a value in the range [0, 1].
+f32 SampleRandomNumber(uint pixel_i, uint pixel_j, uint sample_index, uint sample_dimension, uint samples_per_pixel) {
+    // Wrap arguments
+    pixel_i          = pixel_i & 127u;
+    pixel_j          = pixel_j & 127u;
+    sample_index     = (sample_index % samples_per_pixel) & 255u;
+    sample_dimension = sample_dimension & 255u;
+
+    // xor index based on optimized ranking
+    const uint ranked_sample_index = sample_index ^ g_ranking_tile_buffer.Load(4 * (sample_dimension + (pixel_i + pixel_j * 128u) * 8u));
+
+    // Fetch value in sequence
+    uint value = g_sobol_buffer.Load(4 * (sample_dimension + ranked_sample_index * 256u));
+
+    // If the dimension is optimized, xor sequence value based on optimized scrambling
+    value = value ^ g_scrambling_tile_buffer.Load(4 * ((sample_dimension % 8u) + (pixel_i + pixel_j * 128u) * 8u));
+
+    // Convert to f32 and return
+    return (value + f32(0.5)) / f32(256.0);
+}
+float2 SampleRandomVector2D(uint2 pixel, int noise_offset, int samples_per_pixel = 256) {
+    float2 u = float2(fmod(SampleRandomNumber(pixel.x, pixel.y, noise_offset, 0u, samples_per_pixel) + (((int)(pixel.x / 128)) & 0xFFu) * GOLDEN_RATIO, 1.0f),
+                      fmod(SampleRandomNumber(pixel.x, pixel.y, noise_offset, 1u, samples_per_pixel) + (((int)(pixel.y / 128)) & 0xFFu) * GOLDEN_RATIO, 1.0f));
+    return u;
+}
+
+// clang-format off
+[numthreads(8, 8, 1)]
+void bake_noise(u32x2 tid : SV_DispatchThreadID) {
+    // clang-format on
+
+    if (any(tid.xy >= u32x2(128, 128))) return;
+
+    f32x2 xi                = SampleRandomVector2D(tid.xy, g_frame_index);
+    g_noise_texture[tid.xy] = xi;
+}

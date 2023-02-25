@@ -1,0 +1,765 @@
+// MIT License
+//
+// Copyright (c) 2023 Anton Schreiner
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#include "common.h"
+#include "material.h"
+
+// RWTexture2D<f32x4>              g_primary_gbuffer;
+RWTexture2D<f32x2>              g_noise_texture;
+RWTexture2D<f32x4>              g_output;
+RWTexture2D<f32x4>              g_temporal_accumulated_output;
+RaytracingAccelerationStructure g_tlas;
+
+f32x3 g_camera_pos;
+f32x3 g_camera_look;
+f32x3 g_camera_up;
+f32x3 g_camera_right;
+f32   g_camera_fov;
+f32   g_delta_time;
+u32   g_frame_index;
+u32   g_num_primitives;
+f32   g_camera_yscale;
+f32   g_camera_xscale;
+
+RWStructuredBuffer<AABB>             g_aabb_buffer;
+RWStructuredBuffer<Material>         g_material_buffer;
+RWByteAddressBuffer                  g_light_config;
+RWStructuredBuffer<RadianceHashItem> g_radiance_hash_table;
+SamplerState                         g_linear_sampler;
+
+Ray GenRay(f32x2 uv) {
+    uv    = uv * f32x2(2.0, -2.0) - f32x2(1.0, -1.0);
+    Ray r = (Ray)0;
+
+    r.o        = g_camera_pos + g_camera_right * uv.x * g_camera_xscale + g_camera_up * uv.y * g_camera_yscale;
+    f32 aspect = f32(1.0);
+    r.d        = g_camera_look;
+    return r;
+}
+
+// clang-format off
+[numthreads(1, 1, 1)]
+void clear_counters(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+    // if (tid.x == 0) g_cnt_buffer.Store<u32>(u32(0) * sizeof(u32), u32(0));
+}
+
+// bool IsSphere(u32 primitive_idx) { return (pcg(primitive_idx) & u32(0xff)) > u32(128); }
+
+// https://iquilezles.org/articles/distfunctions/
+f32 sdRoundBox(f32x3 p, f32x3 b, f32 r) {
+    f32x3 q = abs(p) - b;
+    return length(max(q, f32x3(0.0, 0.0, 0.))) + min(max(q.x, max(q.y, q.z)), f32(0.0)) - r;
+}
+f32 sdRoundedCylinder(f32x3 p, f32 ra, f32 rb, f32 h) {
+    f32x2 d = f32x2(length(p.xz) - f32(2.0) * ra + rb, abs(p.y) - h);
+    return min(max(d.x, d.y), f32(0.0)) + length(max(d, f32(0.0))) - rb;
+}
+f32 Brick(f32x3 p) {
+    f32 ra = f32(0.08);
+    f32 rb = f32(0.04);
+    f32 h  = f32(0.15);
+
+    return min(                                                                   //
+        min(                                                                      //
+            sdRoundBox(p + f32x3(0.0, 0.1, 0.0), f32x3(0.4, 0.4, 0.4), f32(0.1)), //
+            min(                                                                  //
+                sdRoundedCylinder(p - f32x3(0.2, 0.3, -0.2), ra, rb, h),          //
+                sdRoundedCylinder(p - f32x3(-0.2, 0.3, -0.2), ra, rb, h)          //
+                )                                                                 //
+            ),
+        min(                                                        //
+            sdRoundedCylinder(p - f32x3(0.2, 0.3, 0.2), ra, rb, h), //
+            sdRoundedCylinder(p - f32x3(-0.2, 0.3, 0.2), ra, rb, h) //
+            ));
+}
+#define BrickFn(x) Brick(x)
+
+f32 MarchBlock(f32x3 o, f32x3 d) {
+    f32 eps       = f32(1.0e-3);
+    u32 num_iters = u32(0);
+    f32 t         = f32(0.0);
+    while (num_iters++ < u32(32)) {
+        f32x3 p    = o + d * t;
+        f32   dist = abs(BrickFn(p));
+        if (dist < eps) return t;
+        t += dist;
+    }
+    return f32(-1.0);
+}
+
+f32x3 BlockNormal(f32x3 p) {
+    f32   eps = f32(0.0001);
+    f32x2 h   = f32x2(eps, 0);
+#define Fn(x) BrickFn(x)
+    return normalize(f32x3(Fn(p + h.xyy) - Fn(p - h.xyy), Fn(p + h.yxy) - Fn(p - h.yxy), Fn(p + h.yyx) - Fn(p - h.yyx)));
+#undef Fn
+}
+
+#define WATER_ID u32(0xdeadbeef)
+
+f32 HitWaterPlane(Ray r) {
+    if (r.d.y > f32(1.0e-3)) return f32(-1.0);
+    f32 t = abs(r.o.y / r.d.y);
+    return t;
+}
+
+Hit Traverse(Ray r, u32 exclude_idx = u32(-1), u32 include_idx = u32(-1)) {
+    f32x3   ird        = f32(1.0) / r.d;
+    RayDesc ray_desc   = (RayDesc)0;
+    ray_desc.Direction = r.d;
+    ray_desc.Origin    = r.o;
+    ray_desc.TMin      = f32(0.0);
+    ray_desc.TMax      = f32(1.0e6);
+    RayQuery<RAY_FLAG_NONE> ray_query;
+    ray_query.TraceRayInline(g_tlas, RAY_FLAG_NONE, 0xffu, ray_desc);
+    // bool  hit_something     = false;
+    // f32x3 hit_color         = f32x3(0.0, 0.0, 0.0);
+    // f32x3 hit_p             = f32x3(0.0, 0.0, 0.0);
+    // f32x3 hit_n             = f32x3(0.0, 0.0, 0.0);
+    f32 cur_t             = f32(1.0e6);
+    u32 hit_primitive_idx = u32(-1);
+    // u32   hit_cnt           = u32(0);
+
+    f32 water_t = HitWaterPlane(r);
+    if (water_t > f32(0.0)) {
+        // hit_something = true;
+        // hit_p             = r.o + r.d * water_t;
+        cur_t             = water_t;
+        hit_primitive_idx = WATER_ID;
+    }
+
+    while (ray_query.Proceed()) {
+        if (ray_query.CandidateType() == CANDIDATE_PROCEDURAL_PRIMITIVE) {
+            // u32 instance_idx  = ray_query.CandidateInstanceIndex();
+            u32 primitive_idx = ray_query.CandidatePrimitiveIndex();
+
+            if (exclude_idx != u32(-1) && primitive_idx == exclude_idx) continue;
+            if (include_idx != u32(-1) && primitive_idx != include_idx) continue;
+
+            // cur_t = ray_query.CommittedRayT();
+
+            AABB aabb = g_aabb_buffer[primitive_idx];
+
+            Material material = g_material_buffer[primitive_idx];
+
+            if (material.primitive_type == PRIMITIVE_TYPE_SPHERE) {
+                Sphere s;
+                s.pos_radius = f32x4((aabb.lo + aabb.hi) / f32(2.0), f32(0.5));
+                // s.r = f32(0.5);
+
+                f32 t = s.intersect(r);
+
+                if (t > f32(0.0) && t < cur_t) {
+                    hit_primitive_idx = primitive_idx;
+                    cur_t             = t;
+                    ray_query.CommitProceduralPrimitiveHit(cur_t);
+                }
+            } else if (material.primitive_type == PRIMITIVE_TYPE_CUBE) {
+
+                f32x2 hit_min_max = hit_aabb(r.o, ird, aabb.lo, aabb.hi);
+
+                if (hit_min_max.x < cur_t) {
+                    f32x3 o = r.o + r.d * hit_min_max.x;
+                    f32   t = MarchBlock((o - (aabb.lo + aabb.hi) * f32(0.5)), r.d);
+                    if (t >= f32(0.0)) {
+                        cur_t = hit_min_max.x;
+                        cur_t += t;
+                        hit_primitive_idx = primitive_idx;
+                        ray_query.CommitProceduralPrimitiveHit(cur_t);
+                    }
+                }
+
+            } else {
+            }
+
+            // Sphere sphere = g_spheres_buffer.Load<Sphere>(sizeof(Sphere) * primitive_idx);
+
+            // f32 this_t = sphere.intersect(r);
+
+            // hit_cnt++;
+
+            // if (this_t > f32(0.0) && this_t < cur_t) {
+            //     cur_t             = this_t;
+            //     hit_p             = r.o + r.d * this_t;
+            //     f32x3 dp          = hit_p - sphere.pos_radius.xyz;
+            //     hit_n             = normalize(dp);
+            //     hit_something     = true;
+            //     hit_color         = sphere.color.xyz; // hit_n * f32(0.5) + f32x3(0.5, 0.5, 0.5); // sphere.color.xyz;
+            //     hit_primitive_idx = primitive_idx;
+
+            // }
+        }
+    }
+    Hit hit;
+    hit.t             = cur_t;
+    hit.primitive_idx = hit_primitive_idx;
+    return hit;
+}
+Ray GenDiffuseRay(f32x3 p, f32x3 n, f32x2 xi) {
+    float3x3 TBN          = GetTBN(n);
+    f32      sint         = sqrt(xi.y);
+    f32      cost         = sqrt(f32(1.0) - sint * sint);
+    f32      M_PI         = f32(3.14159265358979);
+    f32x3    local_coords = f32x3(cost * cos(xi.x * M_PI * f32(2.0)), cost * sin(xi.x * M_PI * f32(2.0)), sint);
+    f32x3    d            = normalize(TBN[2] * local_coords.z + TBN[0] * local_coords.x + TBN[1] * local_coords.y);
+    Ray      r;
+    r.o   = p + n * f32(5.0e-3);
+    r.d   = d;
+    r.ird = f32(1.0) / r.d;
+
+    return r;
+}
+f32x2 SampleBakedNoise(uint2 pixel, int noise_offset) {
+    f32x2 xi = g_noise_texture[pixel.xy & u32(127)].xy;
+    f32x2 u  = f32x2(fmod(xi.x + f32((u32(pixel.x / u32(128)) + noise_offset) & u32(0xff)) * GOLDEN_RATIO, f32(1.0)),
+                     fmod(xi.y + f32((u32(pixel.y / u32(128)) + noise_offset) & u32(0xff)) * GOLDEN_RATIO, f32(1.0)));
+    return u;
+}
+u32 GetHash(f32x3 p) {
+    f32   grid_size = f32(1.0 / 8.0);
+    i32x3 igrid_pos = i32x3(p / grid_size);
+    u32   grid_hash = xxhash32(igrid_pos.x + xxhash32(igrid_pos.y + xxhash32(igrid_pos.z)));
+    return grid_hash;
+}
+
+f32x3 g_env_color;
+f32   g_time;
+
+Material GetMaterial(u32 primitive_idx) {
+    if (primitive_idx == WATER_ID) {
+        Material mat       = (Material)0;
+        mat.albedo         = f32x3(2, 17, 51) / 255.0;
+        mat.transparency   = f32(1.0);
+        mat.primitive_type = PRIMITIVE_TYPE_WATER_PLANE;
+        return mat;
+    } else {
+        return g_material_buffer[primitive_idx];
+    }
+}
+
+RWTexture2D<f32x4> g_rw_water_buffer;
+RWTexture2D<f32x4> g_rw_water_buffer_prev;
+Texture2D<f32x4>   g_water_buffer;
+f32                g_water_plane_size;
+f32                g_water_buffer_size;
+
+// clang-format off
+[numthreads(8, 8, 1)]
+void update_water(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+    u32x2 dims;
+    g_rw_water_buffer.GetDimensions(dims.x, dims.y);
+    if (any(tid.xy >= dims.xy)) return;
+
+    f32x2 uv  = (f32x2(tid.xy) + f32x2(0.5, 0.5)) / f32x2(dims.xy);
+    f32x2 p2d = (f32x2(-0.5, -0.5) + uv) * g_water_plane_size;
+
+    RayDesc ray_desc   = (RayDesc)0;
+    ray_desc.Direction = f32x3(0.0, 1.0, 0.0);
+    ray_desc.Origin    = f32x3(p2d.x, 0.0, p2d.y);
+    ray_desc.TMin      = f32(0.0);
+    ray_desc.TMax      = f32(1.0e-1);
+    RayQuery<RAY_FLAG_NONE> ray_query;
+    ray_query.TraceRayInline(g_tlas, RAY_FLAG_NONE, 0xffu, ray_desc);
+
+    bool hit_anything = false;
+
+    while (ray_query.Proceed()) {
+        if (ray_query.CandidateType() == CANDIDATE_PROCEDURAL_PRIMITIVE) {
+            hit_anything = true;
+            ray_query.CommitProceduralPrimitiveHit(f32(0.0));
+            break;
+        }
+    }
+    f32x4 v = g_rw_water_buffer_prev[tid.xy];
+    v.x     = hit_anything ? f32(2.0 * sin(f32(pcg(asu32(p2d.x) + pcg(asu32(p2d.y) + pcg(asu32(g_time)))) & u32(0xffff)) / f32(0xffff) * f32(2.0) + g_time * f32(16.0))) : v.x;
+    g_rw_water_buffer_prev[tid.xy] = v;
+}
+
+f32 laplace(u32x2 coord) {
+    i32 stepx = i32(1);
+    i32 stepy = i32(1);
+    f32 l00   = g_rw_water_buffer_prev[i32x2(coord) + i32x2(-stepx, -stepy)].x;
+    f32 l01   = g_rw_water_buffer_prev[i32x2(coord) + i32x2(stepx, -stepy)].x;
+    f32 l10   = g_rw_water_buffer_prev[i32x2(coord) + i32x2(stepx, stepy)].x;
+    f32 l11   = g_rw_water_buffer_prev[i32x2(coord) + i32x2(-stepx, stepy)].x;
+    return (l00 + l01 + l10 + l11) * f32(0.25) - g_rw_water_buffer_prev[coord].x;
+}
+// clang-format off
+[numthreads(8, 8, 1)]
+void simulate_water(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+
+    u32x2 dims;
+    g_rw_water_buffer.GetDimensions(dims.x, dims.y);
+    if (any(tid.xy >= dims.xy)) return;
+
+    f32   l       = laplace(tid.xy);
+    f32   offset  = f32(0.0);
+    f32x4 cur_val = g_rw_water_buffer_prev[tid.xy];
+    cur_val.y += l * f32(10.0);
+    f32 clamp_val             = f32(100.0);
+    g_rw_water_buffer[tid.xy] = f32x4(clamp(cur_val.x * f32(0.999) + cur_val.y * g_delta_time * f32(0.7) + offset, -clamp_val, clamp_val),
+                                      clamp(cur_val.y * f32(0.999), -clamp_val, clamp_val), f32(0.0), f32(1.0));
+}
+
+f32 SampleWaterLevel(f32x3 p) {
+    f32x2 uv = (p.xz + f32x2(g_water_plane_size, g_water_plane_size) / f32(2.0)) / g_water_plane_size;
+    // uv.y     = f32(1.0) - uv.y;
+    f32 d = length(uv - f32x2(0.5, 0.5));
+    return lerp(g_water_buffer.SampleLevel(g_linear_sampler, uv, f32(0.0)).x, f32(0.0), saturate(d * f32(2.0)));
+}
+f32x2 grad(f32x3 p) {
+
+    f32   stepx = f32(0.5) * g_water_plane_size / g_water_buffer_size;
+    f32   stepy = f32(0.5) * g_water_plane_size / g_water_buffer_size;
+    f32x2 l00   = SampleWaterLevel(p + f32x3(-stepx, 0.0, -stepy)) * f32x2(-stepx, -stepy);
+    f32x2 l01   = SampleWaterLevel(p + f32x3(stepx, 0.0, stepy)) * f32x2(stepx, -stepy);
+    f32x2 l10   = SampleWaterLevel(p + f32x3(stepx, 0.0, stepy)) * f32x2(stepx, stepy);
+    f32x2 l11   = SampleWaterLevel(p + f32x3(-stepx, 0.0, stepy)) * f32x2(-stepx, stepy);
+    return (l00 + l01 + l10 + l11) * 0.5;
+}
+
+RWTexture2D<f32x4> g_rw_diffuse_gi_target;
+
+f32x3 GetEnv(f32x3 d) {
+    f32 p = (f32(0.5) + f32(0.5) * d.y);
+    return lerp(f32x3(0.0, 0.0, 0.0), f32x3(g_env_color) * 4.0, p);
+}
+
+struct Shade {
+    f32x3 specular;
+    f32x3 diffuse;
+};
+
+f32x3 get_normal(Material material, f32x3 p, AABB aabb) {
+    f32x3 n = f32x3(1.0, 1.0, 0.0);
+    if (material.primitive_type == PRIMITIVE_TYPE_SPHERE) {
+        n = normalize(p - (aabb.lo + aabb.hi) * f32(0.5));
+    } else if (material.primitive_type == PRIMITIVE_TYPE_CUBE) {
+        n = BlockNormal(p - (aabb.lo + aabb.hi) * f32(0.5));
+    } else if (material.primitive_type == PRIMITIVE_TYPE_WATER_PLANE) {
+        n       = f32x3(0.0, 1.0, 0.0);
+        f32x2 g = grad(p);
+        n       = normalize(cross(f32x3(f32(1.0), g.x, f32(0.0)), f32x3(f32(0.0), g.y, f32(1.0))));
+    }
+    return n;
+}
+f32x3 get_radiance_cache(f32x3 p, bool invalidate_cache) {
+    u32              grid_hash  = GetHash(p);
+    u32              hash_index = grid_hash & RADIANCE_HASH_GRID_MASK;
+    RadianceHashItem hash_item  = g_radiance_hash_table[hash_index];
+    if (hash_item.key == grid_hash) {
+        if (invalidate_cache) {
+            g_radiance_hash_table[hash_index].key = u32(0);
+        }
+        return hash_item.radiance;
+    } else {
+        return f32x3_splat(0.0);
+    }
+}
+f32x3 shade_point(u32x2 tid, u32 primitive_idx, f32x3 p, bool invalidate_cache) {
+    AABB     aabb              = g_aabb_buffer[primitive_idx];
+    Material material          = GetMaterial(primitive_idx);
+    f32x3    n                 = get_normal(material, p, aabb);
+    u32      num_specular_rays = u32(32);
+    f32x3    view              = g_camera_look; // normalize(p - g_camera_pos);
+    f32x3    spec_gi           = f32x3(0.0, 0.0, 0.0);
+    f32x3    f0                = lerp(f32x3(0.004, 0.004, 0.004), f32x3(material.albedo), material.metalic);
+    f32x3    f1                = lerp(f32x3(1.0, 1.0, 1.0), f32x3(material.albedo), material.metalic);
+    f32x3    V                 = -view;
+    f32x3    L                 = reflect(view, n);
+    f32x3    H                 = normalize(L + V);
+    f32      VdotH             = max(f32(0.0), dot(V, H));
+    f32x3    f                 = f0 + (f1 - f0) * pow(clamp(f32(1.0) - VdotH, 0.0, 1.0), 5.0);
+
+    Ray shadow_ray;
+    shadow_ray.o = p + n * f32(1.0e-3);
+    shadow_ray.d = normalize(f32x3(-1.0, 1.0, 1.0));
+
+    GGXHelper ggx_helper;
+    ggx_helper.Init(shadow_ray.d, n, V);
+
+    f32x3 ggx_s = ggx_helper.eval(material.roughness);
+
+    ifor(num_specular_rays) {
+        f32x2 xi = SampleBakedNoise(tid.xy, i);
+        f32x3 r  = SampleReflectionVector(view, n, material.roughness, xi);
+        Ray   spec_ray;
+        spec_ray.o   = p + n * f32(1.0e-3);
+        spec_ray.d   = r;
+        spec_ray.ird = f32(1.0) / spec_ray.d;
+        Hit spec_hit = Traverse(spec_ray);
+
+        if (spec_hit.primitive_idx != u32(-1)) {
+            f32x3 p = spec_ray.o + spec_ray.d * spec_hit.t;
+            spec_gi += get_radiance_cache(p, invalidate_cache);
+        } else {
+            spec_gi += GetEnv(spec_ray.d);
+        }
+    }
+
+    f32x3 refraction = f32x3(0.0, 0.0, 0.0);
+
+    if (material.transparency > f32(0.0)) {
+
+        if (primitive_idx == WATER_ID) {
+            f32x3 r1 = refract(view, n, f32(2.2) / f32(1.0));
+
+            Ray ref_ray;
+            ref_ray.o    = p - n * f32(5.0e-2);
+            ref_ray.d    = r1;
+            ref_ray.ird  = f32(1.0) / ref_ray.d;
+            Hit spec_hit = Traverse(ref_ray, /* explude */ u32(primitive_idx));
+
+            if (spec_hit.primitive_idx != u32(-1)) {
+                f32x3 p = ref_ray.o + ref_ray.d * spec_hit.t;
+                refraction += get_radiance_cache(p, invalidate_cache);
+            } else {
+                refraction += GetEnv(ref_ray.d);
+            }
+        } else {
+
+            f32x3 r1 = refract(view, n, f32(1.0) / f32(1.2));
+
+            Ray rray_1;
+            rray_1.o   = p - n * f32(5.0e-2);
+            rray_1.d   = r1;
+            rray_1.ird = f32(1.0) / r1;
+
+            Hit r_hit_1 = Traverse(rray_1, /* explude */ u32(-1), /* include */ u32(primitive_idx));
+
+            if (r_hit_1.primitive_idx != u32(-1)) {
+                f32x3 p = rray_1.o + rray_1.d * r_hit_1.t;
+
+                f32x3 n = get_normal(material, p, g_aabb_buffer[r_hit_1.primitive_idx]);
+
+                f32x3 r1 = refract(rray_1.d, n, f32(1.2) / f32(1.0));
+
+                Ray ref_ray;
+                ref_ray.o    = p - n * f32(5.0e-2);
+                ref_ray.d    = r1;
+                ref_ray.ird  = f32(1.0) / ref_ray.d;
+                Hit spec_hit = Traverse(ref_ray, /* explude */ u32(primitive_idx));
+
+                if (spec_hit.primitive_idx != u32(-1)) {
+                    f32x3 p = ref_ray.o + ref_ray.d * spec_hit.t;
+                    refraction += get_radiance_cache(p, invalidate_cache);
+                } else {
+                    refraction += GetEnv(ref_ray.d);
+                }
+            }
+        }
+    }
+
+    Hit shadow_hit = Traverse(shadow_ray, /* explude */ u32(primitive_idx));
+
+    f32 shadow_f = shadow_hit.primitive_idx != u32(-1) ? f32(0.0) : f32(1.0);
+
+    f32x3 sun_radiance  = f32(6.0) * f32x3(1.0, 1.0, 1.0);
+    f32   M_PI          = f32(3.14159265358979);
+    f32x3 diffuse_light = shadow_f * max(f32(0.0), dot(shadow_ray.d, n)) * sun_radiance / M_PI;
+    f32x3 spec_light    = shadow_f * ggx_s * sun_radiance;
+
+    u32   num_gi_rays = u32(32);
+    f32x3 gi          = f32x3(0.0, 0.0, 0.0);
+
+    // uint  rnd_input;
+    ifor(num_gi_rays) {
+
+        // f32x2 xi = f32x2(u32x2(pcg(g_frame_index * rnd_input + pcg(tid.x * u32(7) + pcg(i))), pcg(g_frame_index + pcg(tid.y * u32(13) + pcg(i)))) & u32(0xffff)) /
+        // f32(0xffff);
+        // f32x2 xi = frac(g_noise_texture[tid.xy & u32(127)].xy + ((g_frame_index + i) & u32(127)) * GOLDEN_RATIO);
+        f32x2 xi = SampleBakedNoise(tid.xy, i);
+
+        // rnd_input = pcg(rnd_input);
+
+        Ray gi_ray = GenDiffuseRay(p, n, xi);
+
+        Hit gi_hit = Traverse(gi_ray);
+
+        if (gi_hit.primitive_idx != u32(-1)) {
+            f32x3 p = gi_ray.o + gi_ray.d * gi_hit.t;
+            gi += get_radiance_cache(p, invalidate_cache);
+        } else {
+            gi += GetEnv(gi_ray.d);
+        }
+    }
+    // g_output[tid.xy] = f32x4(n * f32(0.5) + f32x3(0.5, 0.5, 0.5), f32(1.0));
+    // f32x3 c = f32x3(37.0, 148.0, 76.0) / 255.0;
+    // // if ((pcg(primary_hit.primitive_idx) & u32(0xff)) > u32(128)) c = f32x3(122.0, 82.0, 9.0) / 255.0;
+    // if ((pcg(primary_hit.primitive_idx) & u32(7)) == u32(0)) c = f32x3(220, 224, 90) / 255.0;
+    // if ((pcg(primary_hit.primitive_idx) & u32(7)) == u32(1)) c = f32x3(122.0, 82.0, 9.0) / 255.0;
+    // if ((pcg(primary_hit.primitive_idx) & u32(7)) == u32(2)) c = f32x3(184, 52, 22) / 255.0;
+    // if ((pcg(primary_hit.primitive_idx) & u32(7)) == u32(3)) c = f32x3(22, 184, 135) / 255.0;
+    f32x3 diffuse_radiance = material.emission + (f32x3(1.0, 1.0, 1.0) - f) * material.albedo * lerp((diffuse_light + gi / f32(num_gi_rays)), refraction, material.transparency);
+    f32x3 radiance         = diffuse_radiance + f * (spec_light + spec_gi / f32(num_specular_rays));
+
+    u32              grid_hash  = GetHash(p);
+    u32              hash_index = grid_hash & RADIANCE_HASH_GRID_MASK;
+    RadianceHashItem hash_item  = g_radiance_hash_table[hash_index];
+    if (hash_item.key == grid_hash) {
+        hash_item.radiance = lerp(hash_item.radiance, diffuse_radiance, f32(0.2));
+    } else {
+        hash_item.key      = grid_hash;
+        hash_item.radiance = diffuse_radiance;
+    }
+    g_radiance_hash_table[hash_index] = hash_item;
+
+    return radiance;
+}
+
+// clang-format off
+[numthreads(8, 8, 1)]
+void trace_primary(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+    u32x2 dims;
+    g_output.GetDimensions(dims.x, dims.y);
+    if (any(tid.xy >= dims.xy)) return;
+
+    f32x2 jitter = f32x2(u32x2(pcg(g_frame_index + pcg(tid.x * u32(7))), pcg(g_frame_index + pcg(tid.y))) & u32(0xffff)) / f32(0xffff);
+
+    u32 rnd = pcg(g_frame_index + pcg(tid.x + pcg(tid.y * u32(3))));
+
+    bool invalidate_cache = false; //(rnd & u32(0xff)) == u32(0xff);
+
+    f32x2 uv = (f32x2(tid.xy) + jitter /* f32x2(0.5, 0.5) */) / f32x2(dims.xy);
+
+    Ray r = GenRay(uv);
+
+    Hit primary_hit = Traverse(r);
+
+    // g_output[tid.xy] = SampleBakedNoise(tid.xy, 0).xyyy;
+    // return;
+
+    if (primary_hit.primitive_idx != u32(-1)) {
+
+        f32x3 p = r.o + r.d * primary_hit.t;
+
+        f32x3 radiance = shade_point(tid.xy, primary_hit.primitive_idx, p, invalidate_cache);
+
+        g_output[tid.xy] = f32x4(radiance, f32(1.0));
+    } else {
+        g_output[tid.xy] = f32x4(GetEnv(r.d) / f32(4.0), f32(1.0));
+    }
+
+    // u32 hit_idx = tid.x + tid.y * dims.x;
+
+    // f32x3 light_dir = g_light_config.Load<f32x3>(u32(0) * sizeof(f32x3));
+
+    // if (hit_primitive_idx != u32(-1)) {
+    //     u32 local_hit_cnt;
+    //     g_spheres_hit_cnt_buffer.InterlockedAdd(hit_primitive_idx * sizeof(u32), u32(1), local_hit_cnt);
+    //     u32 global_hit_cnt;
+    //     g_cnt_buffer.InterlockedAdd(u32(0) * sizeof(u32), u32(1), global_hit_cnt);
+    //     g_spheres_hit_buffer.Store<u32x4>(sizeof(u32x4) * global_hit_cnt, u32x4(hit_primitive_idx, local_hit_cnt, asu32(uv)));
+    // } else {
+    // }
+
+    // g_output[tid.xy] = hit_something ? f32x4(hit_color * max(f32(0.0), dot(-light_dir, hit_n)), 1.0) : g_source_image.SampleLevel(g_linear_sampler, uv, f32(0.0));
+    // g_output[tid.xy] = f32x4(viridis_quintic(cur_t / f32(64.0)), f32(1.0));
+    // g_output[tid.xy] = f32x4(viridis_quintic(f32(hit_cnt) / f32(4)), f32(1.0));
+}
+
+    // clang-format off
+[numthreads(8, 8, 1)]
+void taa(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+
+    f32   wsum  = 0.0f;
+    f32x3 vsum  = f32x3(0.0f, 0.0f, 0.0f);
+    f32x3 vsum2 = f32x3(0.0f, 0.0f, 0.0f);
+    u32x2 dims;
+    g_output.GetDimensions(dims.x, dims.y);
+    int RADIUS = 1;
+    for (int y = -RADIUS; y <= RADIUS; ++y)
+        for (int x = -RADIUS; x <= RADIUS; ++x) {
+            if (any(int2(tid.xy + int2(x, y)) < 0) || any((tid.xy + int2(x, y)) >= dims.xy)) continue;
+            const f32x3 neigh = g_output[tid.xy + int2(x, y)].xyz;
+            const f32   w     = exp(-3.0f * (x * x + y * y) / ((RADIUS + 1.0f) * (RADIUS + 1.0f)));
+            vsum2 += neigh * neigh * w;
+            vsum += neigh * w;
+            wsum += w;
+        }
+
+    // Calculate mean and standard deviation
+    const f32x3 ex  = vsum / wsum;
+    const f32x3 ex2 = vsum2 / wsum;
+    const f32x3 dev = sqrt(max(ex2 - ex * ex, 0.0f));
+
+    const f32 boxSize = 1.5f;
+
+    // Reproject and clamp to bounding box
+    const f32x3 nmin = ex - dev * boxSize;
+    const f32x3 nmax = ex + dev * boxSize;
+
+    const f32x3 history        = g_temporal_accumulated_output[tid.xy].xyz;
+    const f32x3 clampedHistory = clamp(history, nmin, nmax);
+    const f32x3 center         = g_output[tid.xy].xyz;
+    const f32x3 result         = lerp(clampedHistory, center, 1.0f / 16.0f);
+
+    g_temporal_accumulated_output[tid.xy].xyz = result;
+}
+
+u32 g_num_lines;
+// RWByteAddressBuffer g_lines_buffer;
+StructuredBuffer<LineCmd> g_lines_buffer;
+RWStructuredBuffer<u32>   g_line_pixels_cnt_buffer;
+RWStructuredBuffer<u32>   g_line_pixels_scan_buffer;
+RWStructuredBuffer<u32>   g_line_pixels_indirect_buffer;
+
+f32x2 GetScreenCoord(f32x3 p) {
+    f32x3 vp = f32x3(dot(g_camera_right, (p - g_camera_pos)), //
+                     dot(g_camera_up, (p - g_camera_pos)),    //
+                     dot(g_camera_look, (p - g_camera_pos))   //
+    );
+    f32x2 pp = f32x2(vp.x / g_camera_xscale, vp.y / g_camera_yscale);
+    return pp.xy * f32x2(0.5, -0.5) + f32x2(0.5, 0.5);
+}
+
+// clang-format off
+[numthreads(64, 1, 1)]
+void count_lines(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+
+    u32x2 dims;
+    g_output.GetDimensions(dims.x, dims.y);
+    u32     line_idx                   = tid.x;
+    LineCmd line_cmd                   = g_lines_buffer[line_idx];
+    f32x2   o                          = f32x2(0.5, 0.5) + floor(GetScreenCoord(line_cmd.o) * f32x2(dims));
+    f32x2   e                          = f32x2(0.5, 0.5) + floor(GetScreenCoord(line_cmd.e) * f32x2(dims));
+    f32x2   uv_o                       = o;
+    f32x2   uv_e                       = e;
+    u32     diff_x                     = abs(o.x - e.x);
+    u32     diff_y                     = abs(o.y - e.y);
+    u32     pixel_count                = max(diff_x, diff_y);
+    g_line_pixels_cnt_buffer[line_idx] = pixel_count;
+}
+
+    // clang-format off
+[numthreads(1, 1, 1)]
+void prepare_lines_arg(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+
+    g_line_pixels_indirect_buffer[0] = (g_line_pixels_scan_buffer[g_num_lines - u32(1)] + g_line_pixels_cnt_buffer[g_num_lines - u32(1)] + u32(63)) / u32(64);
+    g_line_pixels_indirect_buffer[1] = u32(1);
+    g_line_pixels_indirect_buffer[2] = u32(1);
+    g_line_pixels_indirect_buffer[3] = u32(1);
+}
+
+// clang-format off
+[numthreads(64, 1, 1)]
+void draw_lines(u32x3 tid : SV_DispatchThreadID) {
+    // clang-format on
+
+    u32x2 dims;
+    g_output.GetDimensions(dims.x, dims.y);
+
+    u32 line_idx = u32(-1);
+    {
+#define FIND_BISECT_LOAD(offset) g_line_pixels_scan_buffer[offset]
+#define FIND_BISECT_RESULT line_idx
+        FIND_BISECT(tid.x, g_num_lines);
+#undef FIND_BISECT_LOAD
+#undef FIND_BISECT_RESULT
+    }
+
+    LineCmd line_cmd = g_lines_buffer[line_idx];
+    f32x2   o        = f32x2(0.5, 0.5) + floor(GetScreenCoord(line_cmd.o) * f32x2(dims));
+    f32x2   e        = f32x2(0.5, 0.5) + floor(GetScreenCoord(line_cmd.e) * f32x2(dims));
+    // LineCmd line_cmd  = g_lines_buffer.Load<LineCmd>(sizeof(LineCmd) * line_idx);
+    u32 pixel_idx = tid.x - g_line_pixels_scan_buffer[line_idx];
+    u32 diff_x    = u32(floor(abs(o.x - e.x)));
+    u32 diff_y    = u32(floor(abs(o.y - e.y)));
+
+    f32x2 uv_o = o; // / f32x2(dims.xy);// * f32x2(2.0, -2.0) - f32x2(1.0, -1.0);
+    f32x2 uv_e = e; // / f32x2(dims.xy);// * f32x2(2.0, -2.0) - f32x2(1.0, -1.0);
+
+    f32x2 d          = uv_e - uv_o;
+    f32x2 pd         = f32x2(0.0, 0.0);
+    u32   num_pixels = u32(0);
+    if (diff_x > diff_y) {
+        pd         = f32x2((d.x > f32(0.0) ? f32(1.0) : f32(-1.0)), d.y / abs(d.x));
+        num_pixels = diff_x;
+    } else {
+        pd         = f32x2(d.x / abs(d.y), (d.y > f32(0.0) ? f32(1.0) : f32(-1.0)));
+        num_pixels = diff_y;
+    }
+
+    if (pixel_idx >= num_pixels) return;
+
+    // ifor(num_pixels)
+    {
+        f32x2 p           = uv_o + pd * f32(pixel_idx);
+        f32x2 pixel_coord = p;
+        if (any(pixel_coord < f32x2(0.0, 0.0)) || any(pixel_coord >= f32x2(dims))) {
+        } else {
+            if ((line_cmd.flags & u32(1)) == u32(1)) {
+                yfor(2) xfor(2) g_output[i32x2(pixel_coord) + i32x2(x, y)] = f32x4(line_cmd.c, f32(1.0));
+            } else
+                g_output[i32x2(pixel_coord)] = f32x4(line_cmd.c, f32(1.0));
+        }
+    }
+}
+
+RWByteAddressBuffer g_sobol_buffer;
+RWByteAddressBuffer g_ranking_tile_buffer;
+RWByteAddressBuffer g_scrambling_tile_buffer;
+
+// https://github.com/GPUOpen-Effects/FidelityFX-SSSR/blob/master/sample/src/Shaders/PrepareBlueNoiseTexture.hlsl
+// Blue Noise Sampler by Eric Heitz. Returns a value in the range [0, 1].
+f32 SampleRandomNumber(uint pixel_i, uint pixel_j, uint sample_index, uint sample_dimension, uint samples_per_pixel) {
+    // Wrap arguments
+    pixel_i          = pixel_i & 127u;
+    pixel_j          = pixel_j & 127u;
+    sample_index     = (sample_index % samples_per_pixel) & 255u;
+    sample_dimension = sample_dimension & 255u;
+
+    // xor index based on optimized ranking
+    const uint ranked_sample_index = sample_index ^ g_ranking_tile_buffer.Load(4 * (sample_dimension + (pixel_i + pixel_j * 128u) * 8u));
+
+    // Fetch value in sequence
+    uint value = g_sobol_buffer.Load(4 * (sample_dimension + ranked_sample_index * 256u));
+
+    // If the dimension is optimized, xor sequence value based on optimized scrambling
+    value = value ^ g_scrambling_tile_buffer.Load(4 * ((sample_dimension % 8u) + (pixel_i + pixel_j * 128u) * 8u));
+
+    // Convert to f32 and return
+    return (value + f32(0.5)) / f32(256.0);
+}
+float2 SampleRandomVector2D(uint2 pixel, int noise_offset, int samples_per_pixel = 256) {
+    float2 u = float2(fmod(SampleRandomNumber(pixel.x, pixel.y, noise_offset, 0u, samples_per_pixel) + (((int)(pixel.x / 128)) & 0xFFu) * GOLDEN_RATIO, 1.0f),
+                      fmod(SampleRandomNumber(pixel.x, pixel.y, noise_offset, 1u, samples_per_pixel) + (((int)(pixel.y / 128)) & 0xFFu) * GOLDEN_RATIO, 1.0f));
+    return u;
+}
+
+// clang-format off
+[numthreads(8, 8, 1)]
+void bake_noise(u32x2 tid : SV_DispatchThreadID) {
+    // clang-format on
+
+    if (any(tid.xy >= u32x2(128, 128))) return;
+
+    f32x2 xi                = SampleRandomVector2D(tid.xy, g_frame_index);
+    g_noise_texture[tid.xy] = xi;
+}

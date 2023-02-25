@@ -1,0 +1,54 @@
+Language:        Cpp
+BasedOnStyle: LLVM
+AccessModifierOffset: -4 # -2
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Right
+AlignOperands:   true
+AlignTrailingComments: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortBlocksOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakAfterDefinitionReturnType: None
+AlwaysBreakAfterReturnType: None
+AlwaysBreakBeforeMultilineStrings: false
+AlwaysBreakTemplateDeclarations: true # false
+BinPackArguments: true
+BinPackParameters: true
+BraceWrapping:   
+  AfterClass:      true # false
+  AfterControlStatement: true # false
+  AfterEnum:       true # false
+  AfterFunction:   true # false
+  AfterNamespace:  true # false
+  AfterObjCDeclaration: true # false
+  AfterStruct:     true # false
+  AfterUnion:      true # false
+  AfterExternBlock: true # false
+  BeforeCatch:     true # false
+  BeforeElse:      true # false
+  IndentBraces:    true # false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+AccessModifierOffset: '-4'
+AlignConsecutiveAssignments: 'true'
+AlignOperands: 'true'
+BinPackParameters: 'false'
+BinPackArguments: 'false'
+AlignAfterOpenBracket: 'true'
+AlignOperands: 'true'
+AlignConsecutiveDeclarations: 'true'
+AlignTrailingComments: 'true'
+AllowShortCaseLabelsOnASingleLine: 'true'
+AllowShortIfStatementsOnASingleLine: 'true'
+AllowShortLoopsOnASingleLine: 'true'
+BinPackArguments: 'true'
+BinPackParameters: 'true'
+ColumnLimit: '180'
+IndentWidth: 4
+IndentPPDirectives: AfterHash

@@ -1,0 +1,5 @@
+<config>
+<creation_sound_effect_0 duration="0.040000" amplitude="0.930000" frequency0="96.820000" frequency1="274.019989" frequency_dt="9.800000" fade_in_gain="1.170000" fade_out_gain="14.280000" />
+<creation_sound_effect_1 duration="0.040000" amplitude="1.000000" frequency0="127.370003" frequency1="344.899994" frequency_dt="15.180000" fade_in_gain="0.940000" fade_out_gain="17.150000" />
+<creation_sound_effect_2 duration="0.040000" amplitude="1.000000" frequency0="111.000000" frequency1="210.330002" frequency_dt="13.160000" fade_in_gain="0.900000" fade_out_gain="14.460000" />
+</config>
