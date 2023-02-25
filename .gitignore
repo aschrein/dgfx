@@ -1,6 +1,9 @@
 *.blend
 *.blend1
 build/
+experiments/
+imgui.ini
+config.xml
 *~
 *.pfm
 *.dot

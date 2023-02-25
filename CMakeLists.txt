@@ -22,11 +22,13 @@ ENDIF()
 
 set(SDL2_PATH ${CMAKE_SOURCE_DIR}/3rdparty/SDL2)
 
-function(add_exe target_name source_file)
+set(DGFX_DIR ${CMAKE_CURRENT_LIST_DIR})
 
+function(add_exe target_name source_file)
+        message("$$$ Adding an exe with ${source_file}")
         add_executable(${target_name}
-                src/file_io.cpp
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/${source_file})
+                ${DGFX_DIR}/src/file_io.cpp
+                ${source_file})
 
         if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
                 target_compile_options(${target_name} PUBLIC -Wno-unused-function)
@@ -36,8 +38,8 @@ function(add_exe target_name source_file)
         target_compile_options(${target_name} PRIVATE /bigobj)
 
         target_compile_definitions(${target_name} PUBLIC DGFX_PATH="")
-        set_target_properties(${target_name} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-        target_include_directories(${target_name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty)
+        set_target_properties(${target_name} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${DGFX_DIR})
+        target_include_directories(${target_name} PUBLIC ${DGFX_DIR} ${DGFX_DIR}/3rdparty)
         target_link_libraries(${target_name} PUBLIC
                 gfx
                 pugixml
@@ -114,38 +116,40 @@ function(add_exe target_name source_file)
                 TARGET ${target_name}
                 POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy
-                ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/embree/bin/embree3.dll
+                ${DGFX_DIR}/3rdparty/embree/bin/embree3.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/Debug/embree3.dll
                 COMMAND ${CMAKE_COMMAND} -E copy
-                ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/embree/bin/embree3.dll
+                ${DGFX_DIR}/3rdparty/embree/bin/embree3.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/MinSizeRel/embree3.dll
                 COMMAND ${CMAKE_COMMAND} -E copy
-                ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/embree/bin/embree3.dll
+                ${DGFX_DIR}/3rdparty/embree/bin/embree3.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/Release/embree3.dll
                 COMMAND ${CMAKE_COMMAND} -E copy
-                ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/embree/bin/embree3.dll
+                ${DGFX_DIR}/3rdparty/embree/bin/embree3.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/RelWithDebInfo/embree3.dll)
                 
         add_custom_command(
                 TARGET ${target_name}
                 POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy
-                ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/embree/bin/tbb12.dll
+                ${DGFX_DIR}/3rdparty/embree/bin/tbb12.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/Debug/tbb12.dll
                 COMMAND ${CMAKE_COMMAND} -E copy
-                ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/embree/bin/tbb12.dll
+                ${DGFX_DIR}/3rdparty/embree/bin/tbb12.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/MinSizeRel/tbb12.dll
                 COMMAND ${CMAKE_COMMAND} -E copy
-                ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/embree/bin/tbb12.dll
+                ${DGFX_DIR}/3rdparty/embree/bin/tbb12.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/Release/tbb12.dll
                 COMMAND ${CMAKE_COMMAND} -E copy
-                ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/embree/bin/tbb12.dll
+                ${DGFX_DIR}/3rdparty/embree/bin/tbb12.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/RelWithDebInfo/tbb12.dll)
 
 endfunction()
 
-add_exe(main main.cpp)
-add_exe(jit_test jit_test.cpp)
-add_exe(ddgi_experiment ddgi_experiment.cpp)
-add_exe(ao_experiment ao_experiment.cpp)
-add_exe(specular_experiment specular_experiment.cpp)
+if (IS_DIRECTORY "${DGFX_DIR}/experiments")
+        add_subdirectory(experiments)
+else()
+        message("experiments/ Not found")
+endif()
+
+add_exe(jit_test src/jit_test.cpp)

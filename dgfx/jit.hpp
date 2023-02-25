@@ -2420,6 +2420,7 @@ static SharedPtr<Type>        RayQuery_Ty    = Type::Create("RayQueryWrapper",
                                                             {
                                                       {"hit", u1Ty},            //
                                                       {"bary", f32x2Ty},        //
+                                                      {"ray_t", f32Ty},         //
                                                       {"primitive_idx", u32Ty}, //
                                                       {"instance_id", u32Ty},   //
                                                   },
@@ -2434,6 +2435,10 @@ static SharedPtr<FnPrototype> TransposeTy    = FnPrototype::Create("transpose", 
     sjit_assert(argv[0]->IsMatrix());
     return argv[0];
 });
+static SharedPtr<FnPrototype> IsNanFnTy      = FnPrototype::Create("isnan", WildcardTy_0, {{"a", WildcardTy_1}},
+                                                                   [](Array<SharedPtr<Type>> const &argv) { return vector_type_table[BASIC_TYPE_U1][argv[0]->GetVectorSize()]; });
+static SharedPtr<FnPrototype> IsInfFnTy      = FnPrototype::Create("isinf", WildcardTy_0, {{"a", WildcardTy_1}},
+                                                                   [](Array<SharedPtr<Type>> const &argv) { return vector_type_table[BASIC_TYPE_U1][argv[0]->GetVectorSize()]; });
 static SharedPtr<FnPrototype> CrossTy        = FnPrototype::Create("cross", f32x3Ty, {{"a", f32x3Ty}, {"b", f32x3Ty}});
 static SharedPtr<FnPrototype> ReflectTy      = FnPrototype::Create("reflect", f32x3Ty, {{"a", f32x3Ty}, {"b", f32x3Ty}});
 static SharedPtr<FnPrototype> TanFnTy        = FnPrototype::Create("tan", WildcardTy_0, {{"a", WildcardTy_0}}, [](Array<SharedPtr<Type>> const &argv) { return argv[0]; });
@@ -2825,6 +2830,14 @@ static ValueExpr normalize(ValueExpr e) {
 static ValueExpr sqrt(ValueExpr e) {
     SharedPtr<Expr> argv[] = {e.expr};
     return Expr::MakeFunction(SqrtFnTy, argv, SJIT_ARRAYSIZE(argv));
+}
+static ValueExpr isnan(ValueExpr e) {
+    SharedPtr<Expr> argv[] = {e.expr};
+    return Expr::MakeFunction(IsNanFnTy, argv, SJIT_ARRAYSIZE(argv));
+}
+static ValueExpr isinf(ValueExpr e) {
+    SharedPtr<Expr> argv[] = {e.expr};
+    return Expr::MakeFunction(IsInfFnTy, argv, SJIT_ARRAYSIZE(argv));
 }
 static ValueExpr rsqrt(ValueExpr e) {
     SharedPtr<Expr> argv[] = {e.expr};

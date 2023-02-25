@@ -1222,6 +1222,8 @@ GFX_JIT_MAKE_GLOBAL_RESOURCE(g_PreviousTransformBuffer, Type::CreateStructuredBu
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_noise_texture, Texture2D_f32x2_Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_color_buffer, RWTexture2D_f32x4_Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE_ARRAY(g_Textures, Texture2D_f32x4_Ty);
+GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_view_proj, f32x3Ty);
+GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_prev_view_proj, f32x4x4Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_pos, f32x3Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_look, f32x3Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_up, f32x3Ty);
@@ -2273,7 +2275,7 @@ public:
 
             gizmo_manager.ClearLines();
 
-            if (wiggle_camera) g_camera.phi += f32(std::sin(time * f64(3.0)) * f64(0.01));
+            if (wiggle_camera) g_camera.phi += f32(std::sin(time * f64(3.0)) * cur_delta_time / f64(1000.0));
 
             ImGuiContext &g          = *GImGui;
             bool          ui_hovered = g.HoveredWindow != NULL || g.MovingWindow != NULL || g.DragDropActive;
