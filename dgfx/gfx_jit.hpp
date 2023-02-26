@@ -35,6 +35,8 @@
 #    include "gizmo.hpp"
 #    include "jit.hpp"
 
+#    include <filesystem>
+
 struct Mesh {
     uint32_t count;
     uint32_t first_index;
@@ -76,6 +78,10 @@ struct GpuScene {
     GfxBuffer transform_buffer;
     GfxBuffer previous_transform_buffer;
     GfxBuffer upload_transform_buffers[kGfxConstant_BackBufferCount];
+
+    f32x3 aabb_min = f32x3_splat(1.0e6);
+    f32x3 aabb_max = f32x3_splat(-1.0e6);
+    f32   size     = f32(0.0);
 
     std::vector<GfxTexture> textures;
 
@@ -128,7 +134,9 @@ struct GpuScene {
             rt_mesh   = gfxCreateRaytracingPrimitive(gfx, acceleration_structure);
 
             gfxRaytracingPrimitiveBuild(gfx, rt_mesh, index_buffer, mesh.first_index * u32(4), mesh.count, vertex_buffer, mesh.base_vertex * sizeof(Vertex), sizeof(Vertex),
-                                        kGfxBuildRaytracingPrimitiveFlag_Opaque);
+                                        0 //
+                                          //| kGfxBuildRaytracingPrimitiveFlag_Opaque //
+            );
 
             f32x4x4 transform = glm::transpose(transforms[i]);
 
@@ -254,7 +262,17 @@ static GpuScene UploadSceneToGpuMemory(GfxContext gfx, GfxScene scene) {
 
         instances[instance_id]  = instance;
         transforms[instance_id] = instance_ref->transform;
+
+        f32x3 aabb_min = mesh_ref->bounds_min;
+        f32x3 aabb_max = mesh_ref->bounds_max;
+        aabb_min       = mul(instance_ref->transform, aabb_min);
+        aabb_max       = mul(instance_ref->transform, aabb_max);
+
+        xfor(3) gpu_scene.aabb_min[x] = std::min(gpu_scene.aabb_min[x], aabb_min[x]);
+        xfor(3) gpu_scene.aabb_max[x] = std::max(gpu_scene.aabb_max[x], aabb_max[x]);
     }
+    gpu_scene.size         = f32(0.0);
+    xfor(3) gpu_scene.size = std::max(gpu_scene.size, gpu_scene.aabb_max[x] - gpu_scene.aabb_min[x]);
 
     gpu_scene.instance_buffer           = gfxCreateBuffer<Instance>(gfx, (uint32_t)instances.size(), instances.data());
     gpu_scene.transform_buffer          = gfxCreateBuffer<f32x4x4>(gfx, (uint32_t)transforms.size(), transforms.data());
@@ -785,11 +803,35 @@ var trilinear_weights[2][2][2] = {                                              
             (frac_rp.x())            * (frac_rp.y())            * (frac_rp.z())                 \
         },                                                                                      \
     },                                                                                          \
-};                                                                                                                                                               \
-        // clang-format on
+};
+        
+#define BILINEAR_WEIGHTS(frac_uv)                                 \
+    var bilinear_weights[2][2] =                                  \
+    {                                                             \
+            {(f32(1.0) - frac_uv.x()) * (f32(1.0) - frac_uv.y()), \
+            (frac_uv.x()) * (f32(1.0) - frac_uv.y())},            \
+            {(f32(1.0) - frac_uv.x()) * (frac_uv.y()),            \
+            (frac_uv.x()) * (frac_uv.y())},                       \
+    };
+
+// clang-format on
 
 static GPUKernel CompileGlobalModule(GfxContext gfx, String _name) {
     using namespace SJIT;
+
+    namespace fs = std::filesystem;
+    if (!fs::is_directory(".shader_cache") || !fs::exists(".shader_cache")) {
+        fs::create_directory(".shader_cache");
+    }
+    {
+        char buf[0x100];
+        sprintf(buf, ".shader_cache/%s.hlsl", _name.c_str());
+        std::ofstream file(buf);
+        if (file.is_open()) {
+            file << GetGlobalModule().Finalize();
+            file.close();
+        }
+    }
     auto program = gfxCreateProgram(gfx, GfxProgramDesc::Compute(GetGlobalModule().Finalize()));
     if (!program) {
         fprintf(stdout, "%s", GetGlobalModule().Finalize());
@@ -1002,6 +1044,40 @@ struct GGXHelper {
         var Ne = normalize(make_f32x3(alpha_x * Nh.x(), alpha_y * Nh.y(), max(f32(0.0), Nh.z())));
         return Ne;
     }
+    static var SampleNormal(var view_direction, var normal, var roughness, var xi) {
+        var o = Make(f32x4Ty);
+        EmitIfElse(
+            roughness < f32(0.001), //
+            [&] {
+                o.xyz() = normal;
+                o.w()   = f32(1.0); // ? pdf of a nearly mirror like reflection
+            },                      //
+            [&] {
+                var tbn_transform      = transpose(GetTBN(normal));
+                var view_direction_tbn = mul(-view_direction, tbn_transform);
+                var a                  = roughness * roughness;
+                var a2                 = a * a;
+                var sampled_normal_tbn = SampleGGXVNDF(view_direction_tbn, a, a, xi.x(), xi.y());
+                var inv_tbn_transform  = transpose(tbn_transform);
+                o.xyz()                = mul(sampled_normal_tbn, inv_tbn_transform);
+
+                // pdf
+                var N        = normal;
+                var V        = -view_direction;
+                var H        = normalize(o.xyz() + V);
+                var NdotH    = dot(H, N);
+                var NdotH2   = NdotH * NdotH;
+                var NdotV    = dot(H, V);
+                var NdotL    = dot(N, o.xyz());
+                var g        = G(a, NdotV, NdotL);
+                var denom    = (NdotH2 * (a2 - f32(1.0)) + f32(1.0));
+                denom        = PI * denom * denom;
+                var D        = g * a2 / denom;
+                var jacobian = f32(4.0) * dot(V, N);
+                o.w()        = (D / jacobian); // pdf
+            });
+        return o;
+    }
     static var SampleReflectionVector(var view_direction, var normal, var roughness, var xi) {
         var o = Make(f32x4Ty);
         EmitIfElse(
@@ -1049,7 +1125,95 @@ struct PingPong {
         pong = u32(1) - ping;
     }
 };
-
+static u32 GetBytesPerPixel(DXGI_FORMAT format) {
+    switch (format) {
+    case DXGI_FORMAT_R8_TYPELESS:
+    case DXGI_FORMAT_R8_UNORM:
+    case DXGI_FORMAT_R8_UINT:
+    case DXGI_FORMAT_R8_SNORM:
+    case DXGI_FORMAT_R8_SINT:
+    case DXGI_FORMAT_A8_UNORM: //
+        return u32(1);
+    case DXGI_FORMAT_R8G8_TYPELESS:
+    case DXGI_FORMAT_R8G8_UNORM:
+    case DXGI_FORMAT_R8G8_UINT:
+    case DXGI_FORMAT_R8G8_SNORM:
+    case DXGI_FORMAT_R8G8_SINT:
+    case DXGI_FORMAT_R16_TYPELESS:
+    case DXGI_FORMAT_R16_FLOAT:
+    case DXGI_FORMAT_D16_UNORM:
+    case DXGI_FORMAT_R16_UNORM:
+    case DXGI_FORMAT_R16_UINT:
+    case DXGI_FORMAT_R16_SNORM:
+    case DXGI_FORMAT_R16_SINT: //
+        return u32(2);
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+    case DXGI_FORMAT_R10G10B10A2_UINT:
+    case DXGI_FORMAT_R11G11B10_FLOAT:
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case DXGI_FORMAT_R8G8B8A8_UINT:
+    case DXGI_FORMAT_R8G8B8A8_SNORM:
+    case DXGI_FORMAT_R8G8B8A8_SINT:
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8X8_UNORM:
+    case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    case DXGI_FORMAT_R16G16_TYPELESS:
+    case DXGI_FORMAT_R16G16_FLOAT:
+    case DXGI_FORMAT_R16G16_UNORM:
+    case DXGI_FORMAT_R16G16_UINT:
+    case DXGI_FORMAT_R16G16_SNORM:
+    case DXGI_FORMAT_R16G16_SINT:
+    case DXGI_FORMAT_R32_TYPELESS:
+    case DXGI_FORMAT_D32_FLOAT:
+    case DXGI_FORMAT_R32_FLOAT:
+    case DXGI_FORMAT_R32_UINT:
+    case DXGI_FORMAT_R32_SINT: //
+        return u32(4);
+    case DXGI_FORMAT_BC1_TYPELESS:
+    case DXGI_FORMAT_BC1_UNORM:
+    case DXGI_FORMAT_BC1_UNORM_SRGB:
+    case DXGI_FORMAT_BC4_TYPELESS:
+    case DXGI_FORMAT_BC4_UNORM:
+    case DXGI_FORMAT_BC4_SNORM:
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case DXGI_FORMAT_R16G16B16A16_UNORM:
+    case DXGI_FORMAT_R16G16B16A16_UINT:
+    case DXGI_FORMAT_R16G16B16A16_SNORM:
+    case DXGI_FORMAT_R16G16B16A16_SINT: //
+        return u32(8);
+    case DXGI_FORMAT_BC2_TYPELESS:
+    case DXGI_FORMAT_BC2_UNORM:
+    case DXGI_FORMAT_BC2_UNORM_SRGB:
+    case DXGI_FORMAT_BC3_TYPELESS:
+    case DXGI_FORMAT_BC3_UNORM:
+    case DXGI_FORMAT_BC3_UNORM_SRGB:
+    case DXGI_FORMAT_BC5_TYPELESS:
+    case DXGI_FORMAT_BC5_UNORM:
+    case DXGI_FORMAT_BC5_SNORM:
+    case DXGI_FORMAT_BC6H_TYPELESS:
+    case DXGI_FORMAT_BC6H_UF16:
+    case DXGI_FORMAT_BC6H_SF16:
+    case DXGI_FORMAT_BC7_TYPELESS:
+    case DXGI_FORMAT_BC7_UNORM:
+    case DXGI_FORMAT_BC7_UNORM_SRGB:
+    case DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case DXGI_FORMAT_R32G32B32A32_TYPELESS: //
+        return u32(16);
+    case DXGI_FORMAT_R32G32B32_FLOAT:
+    case DXGI_FORMAT_R32G32B32_TYPELESS: //
+        return u32(12);
+    default: break;
+    }
+    SJIT_TRAP;
+}
 static BasicType GetBasicType(DXGI_FORMAT fmt) {
     switch (fmt) {
     case DXGI_FORMAT_R32G32B32A32_TYPELESS: return BASIC_TYPE_UNKNOWN;
@@ -1131,6 +1295,7 @@ static u32 LSB(u32 v) {
 }
 
 class Sun {
+public:
     f32                     width = f32(4.0);
     GfxContext              gfx;
     std::vector<GfxTexture> cascades;
@@ -1146,6 +1311,9 @@ class Sun {
     f32x4x4 proj[4] = {};
     f32x3   pos     = {};
     f32x3   dir     = {};
+
+    f32 theta = f32(3.141592 / 4.0);
+    f32 phi   = f32(3.141592 / 4.0);
 
 public:
     void Init(GfxContext _gfx, char const *_shader_path) {
@@ -1167,9 +1335,6 @@ public:
         cur_cascade_idx = LSB(frame_idx & u32(0x7));
 
         sjit_assert(cur_cascade_idx < num_cascades);
-
-        f32 theta = f32(3.141592 / 4.0);
-        f32 phi   = f32(3.141592 / 4.0);
 
         dir   = {};
         dir.x = std::cos(theta) * std::cos(phi);
@@ -1225,6 +1390,7 @@ GFX_JIT_MAKE_GLOBAL_RESOURCE_ARRAY(g_Textures, Texture2D_f32x4_Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_view_proj, f32x3Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_prev_view_proj, f32x4x4Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_pos, f32x3Ty);
+GFX_JIT_MAKE_GLOBAL_RESOURCE(g_scene_size, f32Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_look, f32x3Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_up, f32x3Ty);
 GFX_JIT_MAKE_GLOBAL_RESOURCE(g_camera_right, f32x3Ty);
@@ -1386,10 +1552,10 @@ struct GfxTextureResource : public IGfxResourceRegistryItem {
 };
 
 static var GenCameraRay(var uv) {
-    uv     = uv * f32x2(2.0, -2.0) - f32x2(1.0, -1.0);
-    var r  = Zero(Ray_Ty);
-    r["o"] = g_camera_pos;
-    r["d"] = normalize(g_camera_look + tan(g_camera_fov * f32(0.5)) * (g_camera_right * uv.x() * g_camera_aspect + g_camera_up * uv.y()));
+    var _uv = uv * f32x2(2.0, -2.0) - f32x2(1.0, -1.0);
+    var r   = Zero(Ray_Ty);
+    r["o"]  = g_camera_pos;
+    r["d"]  = normalize(g_camera_look + tan(g_camera_fov * f32(0.5)) * (g_camera_right * _uv.x() * g_camera_aspect + g_camera_up * _uv.y()));
     return r;
 }
 
@@ -1475,7 +1641,21 @@ public:
 
                 g_rw_gbuffer_world_normals.Write(tid, make_f32x4(n, f32(1.0)));
                 g_rw_gbuffer_world_position.Write(tid, make_f32x4(w, f32(1.0)));
-                g_rw_roughnes.Write(tid, g_global_roughnes);
+
+                // var roughness = g_global_roughnes * (frac(f32(5.5453123) * length(sin(w * f32x3(4.5453, 7.7932, 5.3437583)))));
+                var roughness = g_global_roughnes.Copy();
+                var cw        = (w / g_scene_size * f32(64.0));
+
+                var icw = cw.ToI32();
+                ifor(3) EmitIfElse(w[i] < f32(0.0), [&] { icw[i] = icw[i] - i32(1); });
+                var ucw   = abs(icw).AsU32();
+                var b_x   = ucw.x() & u32(1);
+                var b_y   = ucw.y() & u32(1);
+                var b_z   = ucw.z() & u32(1);
+                var b     = (b_x ^ b_y) ^ b_z;
+                roughness = roughness * b.ToF32() * (f32(1.0) - length(frac(cw) - f32x3_splat(0.5)) * f32(2.0));
+
+                g_rw_roughnes.Write(tid, roughness);
             });
 
             // fprintf(stdout, GetGlobalModule().Finalize());
@@ -1830,8 +2010,9 @@ static var GetSunShadow(var p, var n) {
     return l;
 };
 static SharedPtr<Type> Hit_Ty = Type::Create("Hit", {
-                                                        {"W", f32x3Ty}, //
-                                                        {"N", f32x3Ty}, //
+                                                        {"W", f32x3Ty},  //
+                                                        {"N", f32x3Ty},  //
+                                                        {"UV", f32x2Ty}, //
                                                     });
 static var             GetHit(var ray_query) {
     var barys         = ray_query["bary"];
@@ -1842,24 +2023,28 @@ static var             GetHit(var ray_query) {
     var mesh      = g_MeshBuffer.Load(instance["mesh_id"]);
     var transform = g_TransformBuffer.Load(instance_idx);
 
-    var i0  = g_IndexBuffer.Load(mesh["first_index"] + primitive_idx * u32(3) + u32(0)) + mesh["base_vertex"];
-    var i1  = g_IndexBuffer.Load(mesh["first_index"] + primitive_idx * u32(3) + u32(1)) + mesh["base_vertex"];
-    var i2  = g_IndexBuffer.Load(mesh["first_index"] + primitive_idx * u32(3) + u32(2)) + mesh["base_vertex"];
-    var v0  = g_VertexBuffer.Load(i0);
-    var v1  = g_VertexBuffer.Load(i1);
-    var v2  = g_VertexBuffer.Load(i2);
-    var wv0 = mul(transform, make_f32x4(v0["position"]["xyz"], f32(1.0)))["xyz"];
-    var wv1 = mul(transform, make_f32x4(v1["position"]["xyz"], f32(1.0)))["xyz"];
-    var wv2 = mul(transform, make_f32x4(v2["position"]["xyz"], f32(1.0)))["xyz"];
-    var wn0 = normalize(mul(transform, make_f32x4(v0["normal"]["xyz"], f32(0.0)))["xyz"]);
-    var wn1 = normalize(mul(transform, make_f32x4(v1["normal"]["xyz"], f32(0.0)))["xyz"]);
-    var wn2 = normalize(mul(transform, make_f32x4(v2["normal"]["xyz"], f32(0.0)))["xyz"]);
-
-    var w    = Interpolate(wv0, wv1, wv2, barys);
-    var n    = normalize(Interpolate(wn0, wn1, wn2, barys));
-    var hit  = Zero(Hit_Ty);
-    hit["W"] = w;
-    hit["N"] = n;
+    var i0    = g_IndexBuffer.Load(mesh["first_index"] + primitive_idx * u32(3) + u32(0)) + mesh["base_vertex"];
+    var i1    = g_IndexBuffer.Load(mesh["first_index"] + primitive_idx * u32(3) + u32(1)) + mesh["base_vertex"];
+    var i2    = g_IndexBuffer.Load(mesh["first_index"] + primitive_idx * u32(3) + u32(2)) + mesh["base_vertex"];
+    var v0    = g_VertexBuffer.Load(i0);
+    var v1    = g_VertexBuffer.Load(i1);
+    var v2    = g_VertexBuffer.Load(i2);
+    var wv0   = mul(transform, make_f32x4(v0["position"]["xyz"], f32(1.0)))["xyz"];
+    var wv1   = mul(transform, make_f32x4(v1["position"]["xyz"], f32(1.0)))["xyz"];
+    var wv2   = mul(transform, make_f32x4(v2["position"]["xyz"], f32(1.0)))["xyz"];
+    var wn0   = normalize(mul(transform, make_f32x4(v0["normal"]["xyz"], f32(0.0)))["xyz"]);
+    var wn1   = normalize(mul(transform, make_f32x4(v1["normal"]["xyz"], f32(0.0)))["xyz"]);
+    var wn2   = normalize(mul(transform, make_f32x4(v2["normal"]["xyz"], f32(0.0)))["xyz"]);
+    var uv0   = v0["uv"]["xy"];
+    var uv1   = v1["uv"]["xy"];
+    var uv2   = v2["uv"]["xy"];
+    var w     = Interpolate(wv0, wv1, wv2, barys);
+    var n     = normalize(Interpolate(wn0, wn1, wn2, barys));
+    var uv    = Interpolate(uv0, uv1, uv2, barys);
+    var hit   = Zero(Hit_Ty);
+    hit["W"]  = w;
+    hit["N"]  = n;
+    hit["UV"] = uv;
     return hit;
 }
 static var TraceGGX(var N, var P, var roughness, var xi) {
@@ -1872,6 +2057,22 @@ static var TraceGGX(var N, var P, var roughness, var xi) {
     ray_desc["TMax"]      = f32(1.0e6);
     var ray_query         = RayQuery(g_tlas, ray_desc);
     return ray_query;
+}
+static ValueExpr RayQueryTransparent(ValueExpr tlas, ValueExpr ray_desc) {
+    return RayQueryTransparent(g_tlas, ray_desc, [&](var _w) {
+        var instance          = g_InstanceBuffer[_w["instance_id"]];
+        var mesh              = g_MeshBuffer[instance["mesh_id"]];
+        var material          = g_MaterialBuffer[mesh["material_id"]];
+        var albedo            = material["albedo"];
+        var albedo_texture_id = albedo.w().AsU32();
+        albedo.w()            = f32(1.0);
+        EmitIfElse(albedo_texture_id != u32(0Xffffffff), [&] {
+            var hit        = GetHit(_w);
+            var tex_albedo = g_Textures[albedo_texture_id.NonUniform()].Sample(g_linear_sampler, hit["UV"]);
+            albedo *= tex_albedo;
+        });
+        return albedo.w() > f32(0.5);
+    });
 }
 class PrimaryRays {
 private:
@@ -2369,6 +2570,37 @@ public:
                     gfxCommandDrawIndexed(gfx, mesh.count, 1, mesh.first_index, mesh.base_vertex);
                 }
             }
+
+            defer(frame_idx++);
+
+            g_global_runtime_resource_registry = {};
+            set_global_resource(g_frame_idx, frame_idx);
+            set_global_resource(g_tlas, gpu_scene.acceleration_structure);
+            set_global_resource(g_linear_sampler, linear_sampler);
+            set_global_resource(g_nearest_sampler, nearest_sampler);
+            set_global_resource(g_velocity, velocity_buffer);
+            set_global_resource(g_noise_texture, blue_noise_baker.GetTexture());
+            set_global_resource(g_MeshBuffer, gpu_scene.mesh_buffer);
+            set_global_resource(g_IndexBuffer, gpu_scene.index_buffer);
+            set_global_resource(g_VertexBuffer, gpu_scene.vertex_buffer);
+            set_global_resource(g_InstanceBuffer, gpu_scene.instance_buffer);
+            set_global_resource(g_MaterialBuffer, gpu_scene.material_buffer);
+            set_global_resource(g_TransformBuffer, gpu_scene.transform_buffer);
+            set_global_resource(g_PreviousTransformBuffer, gpu_scene.previous_transform_buffer);
+            set_global_resource(g_Textures, ResourceSlot(gpu_scene.textures.data(), (uint32_t)gpu_scene.textures.size()));
+            set_global_resource(g_visibility_buffer, visibility_buffer);
+            set_global_resource(g_camera_pos, g_camera.pos);
+            set_global_resource(g_scene_size, gpu_scene.size);
+            set_global_resource(g_camera_view_proj, transpose(g_camera.view_proj));
+            set_global_resource(g_camera_prev_view_proj, transpose(g_camera.prev_view_proj));
+            set_global_resource(g_camera_look, g_camera.look);
+            set_global_resource(g_camera_up, g_camera.up);
+            set_global_resource(g_camera_right, g_camera.right);
+            set_global_resource(g_camera_fov, g_camera.fov);
+            set_global_resource(g_camera_aspect, g_camera.aspect);
+            set_global_resource(g_sun_shadow_matrices, sun.GetMatrixBuffer());
+            set_global_resource(g_sun_shadow_maps, ResourceSlot(sun.GetTextures().data(), (uint32_t)sun.GetTextures().size()));
+            set_global_resource(g_sun_dir, sun.GetDir());
 
             Render();
 

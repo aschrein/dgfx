@@ -2,6 +2,7 @@
 *.blend1
 build/
 experiments/
+.shader_cache/
 imgui.ini
 config.xml
 *~

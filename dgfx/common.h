@@ -212,6 +212,7 @@ STATIC_FUNCTION f32x4 f32x4_splat(f32 a) { return f32x4(a, a, a, a); }
 STATIC_FUNCTION f32x3 f32x3_splat(f32 a) { return f32x3(a, a, a); }
 STATIC_FUNCTION f32x2 f32x2_splat(f32 a) { return f32x2(a, a); }
 STATIC_FUNCTION u32x4 u32x4_splat(u32 a) { return u32x4(a, a, a, a); }
+STATIC_FUNCTION u32x3 u32x3_splat(u32 a) { return u32x3(u32(a), u32(a), u32(a)); }
 
 #    if !defined(__HLSL_VERSION)
 
@@ -390,11 +391,11 @@ STATIC_FUNCTION f32x3x3 GetTBN(f32x3 N) {
 }
 STATIC_FUNCTION f32x3 SampleReflectionVector(f32x3 view_direction, f32x3 normal, f32 roughness, f32x2 xi) {
     if (roughness < f32(0.001)) return reflect(view_direction, normal);
-    f32x3x3 tbn_transform           = transpose(GetTBN(normal));
-    f32x3   view_direction_tbn      = mul(-view_direction, tbn_transform);
-    //f32     a                       = roughness * roughness;
-    f32x3   sampled_normal_tbn      = SampleGGXVNDF(view_direction_tbn, roughness * roughness, roughness * roughness, xi.x, xi.y);
-    f32x3   reflected_direction_tbn = reflect(-view_direction_tbn, sampled_normal_tbn);
+    f32x3x3 tbn_transform      = transpose(GetTBN(normal));
+    f32x3   view_direction_tbn = mul(-view_direction, tbn_transform);
+    // f32     a                       = roughness * roughness;
+    f32x3 sampled_normal_tbn      = SampleGGXVNDF(view_direction_tbn, roughness * roughness, roughness * roughness, xi.x, xi.y);
+    f32x3 reflected_direction_tbn = reflect(-view_direction_tbn, sampled_normal_tbn);
     // Transform reflected_direction back to the initial space.
     f32x3x3 inv_tbn_transform = transpose(tbn_transform);
     return mul(reflected_direction_tbn, inv_tbn_transform);
@@ -506,7 +507,6 @@ struct GGXHelper {
     f32x3 fresnel(f32x3 f0 = f32x3_splat(0.04)) { return f0 + (f32x3_splat(1.0) - f0) * pow(saturate(f32(1.0) - VdotH), f32(5.0)); }
     f32   eval(f32 r) { return NdotL * G(r) * D(r); }
 };
-
 
 // https://www.shadertoy.com/view/XtGGzG
 STATIC_FUNCTION f32x3 viridis_quintic(f32 x) {

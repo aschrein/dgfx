@@ -4278,6 +4278,9 @@ private:
         case DXGI_FORMAT_R32G32B32A32_FLOAT:
         case DXGI_FORMAT_R32G32B32A32_TYPELESS:
             return 16;
+        case DXGI_FORMAT_R32G32B32_FLOAT:
+        case DXGI_FORMAT_R32G32B32_TYPELESS:
+            return 12;
         default:
             break;  // unsupported texture format
         }
@@ -4367,6 +4370,9 @@ private:
         case DXGI_FORMAT_R32G32B32A32_FLOAT:
         case DXGI_FORMAT_R32G32B32A32_TYPELESS:
             return 4;
+        case DXGI_FORMAT_R32G32B32_FLOAT:
+        case DXGI_FORMAT_R32G32B32_TYPELESS:
+            return 3;
         default:
             break;  // unsupported texture format
         }

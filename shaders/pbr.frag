@@ -66,14 +66,17 @@ Result main(in Params params, uint primitiveID : SV_PrimitiveID, float3 baryWeig
 
     // Load and sample our texture maps
     uint albedo_map      = asuint(material.albedo.w);
+    material.albedo.w    = float(1.0);
     uint roughness_map   = asuint(material.metallicity_roughness.w);
     uint metallicity_map = asuint(material.metallicity_roughness.y);
     uint normal_map      = asuint(material.ao_normal_emissivity.y);
     uint ao_map          = asuint(material.ao_normal_emissivity.x);
 
     if (albedo_map != uint(-1)) {
-        material.albedo.xyz *= g_Textures[albedo_map].Sample(g_TextureSampler, params.uv).xyz;
+        material.albedo.xyzw *= g_Textures[albedo_map].Sample(g_TextureSampler, params.uv).xyzw;
     }
+
+    if (material.albedo.w < float(0.5)) discard;
 
     if (roughness_map != uint(-1)) {
         material.metallicity_roughness.z *= g_Textures[roughness_map].Sample(g_TextureSampler, params.uv).x;
@@ -153,8 +156,8 @@ Result main(in Params params, uint primitiveID : SV_PrimitiveID, float3 baryWeig
     // if (front_face)
     //     baryWeights = float3(1.0, 1.0, 1.0) - baryWeights;
     // uint back_face_flag = (!front_face ? uint(1) : uint(0)) << uint(31);
-    result.color        = uint4(asuint(baryWeights.yz), (g_InstanceId), (primitiveID));
-    result.velocity     = CalculateVelocity(params);
+    result.color    = uint4(asuint(baryWeights.yz), (g_InstanceId), (primitiveID));
+    result.velocity = CalculateVelocity(params);
 
     return result;
 }

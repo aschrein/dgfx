@@ -509,6 +509,9 @@ enum OpType {
     OP_MUL_ASSIGN,
     OP_DIV_ASSIGN,
     OP_MINUS_ASSIGN,
+    OP_BIT_OR_ASSIGN,
+    OP_BIT_AND_ASSIGN,
+    OP_BIT_XOR_ASSIGN,
     OP_ASSIGN,
     OP_LOGICAL_AND,
     OP_BIT_AND,
@@ -1226,6 +1229,7 @@ RayQueryWrapper __ray_query(RaytracingAccelerationStructure tlas, RayDesc ray_de
     return w;
 }
 
+f32x2 __interpolate(f32x2 v0, f32x2 v1, f32x2 v2, f32x2 barys) { return v0 * (f32(1.0) - barys.x - barys.y) + v1 * barys.x + v2 * barys.y; }
 f32x3 __interpolate(f32x3 v0, f32x3 v1, f32x3 v2, f32x2 barys) { return v0 * (f32(1.0) - barys.x - barys.y) + v1 * barys.x + v2 * barys.y; }
 f32x4 __interpolate(f32x4 v0, f32x4 v1, f32x4 v2, f32x2 barys) { return v0 * (f32(1.0) - barys.x - barys.y) + v1 * barys.x + v2 * barys.y; }
 f32x3x3 __get_tbn(f32x3 N) {
@@ -1776,12 +1780,25 @@ public:
         SharedPtr<Expr> expr = Create();
         expr->type           = EXPRESSION_TYPE_SWIZZLE;
         expr->lhs            = _expr;
+        u32 max_component    = u32(0);
         ifor(4) {
             if (_swizzle[i] == '\0') break;
             sjit_assert(_swizzle[i] == 'x' || _swizzle[i] == 'y' || _swizzle[i] == 'z' || _swizzle[i] == 'w');
             expr->swizzle[i] = _swizzle[i];
+            if (_swizzle[i] == 'x')
+                max_component = std::max(max_component, u32(0));
+            else if (_swizzle[i] == 'y')
+                max_component = std::max(max_component, u32(1));
+            else if (_swizzle[i] == 'z')
+                max_component = std::max(max_component, u32(2));
+            else if (_swizzle[i] == 'w')
+                max_component = std::max(max_component, u32(3));
+            else {
+                SJIT_TRAP;
+            }
             expr->swizzle_size++;
         }
+        sjit_assert(max_component < _expr->InferType()->GetVectorSize());
         sprintf_s(expr->name, "%s.%s", expr->lhs->name, expr->swizzle);
         expr->InferType();
         return expr;
@@ -1855,6 +1872,15 @@ public:
                 sprintf_s(name, lhs->name);
             } else if (op_type == OP_MINUS_ASSIGN) {
                 hlsl.EmitF("%s -= %s;\n", lhs->name, rhs->name);
+                sprintf_s(name, lhs->name);
+            } else if (op_type == OP_BIT_OR_ASSIGN) {
+                hlsl.EmitF("%s |= %s;\n", lhs->name, rhs->name);
+                sprintf_s(name, lhs->name);
+            } else if (op_type == OP_BIT_XOR_ASSIGN) {
+                hlsl.EmitF("%s ^= %s;\n", lhs->name, rhs->name);
+                sprintf_s(name, lhs->name);
+            } else if (op_type == OP_BIT_AND_ASSIGN) {
+                hlsl.EmitF("%s &= %s;\n", lhs->name, rhs->name);
                 sprintf_s(name, lhs->name);
             } else if (op_type == OP_MUL_ASSIGN) {
                 hlsl.EmitF("%s *= %s;\n", lhs->name, rhs->name);
@@ -2108,10 +2134,7 @@ public:
                     }
                 }
             }
-        }
-
-#    if 1
-        else if (type == EXPRESSION_TYPE_IF_ELSE) {
+        } else if (type == EXPRESSION_TYPE_IF_ELSE) {
             if (cond->GetScalarMode() == SCALAR_MODE_NON_SCALAR)
                 scalar_mode = SCALAR_MODE_NON_SCALAR;
             else {
@@ -2120,9 +2143,13 @@ public:
                 else
                     scalar_mode = SCALAR_MODE_SCALAR;
             }
-        }
-#    endif // 0
-        else {
+        } else if (type == EXPRESSION_TYPE_INDEX) {
+            if (index) {
+                if ((lhs && lhs->GetScalarMode() == SCALAR_MODE_NON_SCALAR) || (index && index->GetScalarMode() == SCALAR_MODE_NON_SCALAR)) scalar_mode = SCALAR_MODE_NON_SCALAR;
+            } else
+                scalar_mode = lhs->GetScalarMode();
+
+        } else {
             SJIT_UNIMPLEMENTED;
         }
         assert(scalar_mode != SCALAR_MODE_UNKNOWN);
@@ -2153,13 +2180,16 @@ public:
                 false) {
                 sjit_assert(rhs_ty == u1Ty);
                 inferred_type = u1Ty;
-            } else if (                      //
-                op_type == OP_BIT_AND ||     //
-                op_type == OP_BIT_OR ||      //
-                op_type == OP_BIT_XOR ||     //
-                op_type == OP_MODULO ||      //
-                op_type == OP_SHIFT_LEFT ||  //
-                op_type == OP_SHIFT_RIGHT || //
+            } else if (                         //
+                op_type == OP_BIT_AND ||        //
+                op_type == OP_BIT_OR ||         //
+                op_type == OP_BIT_XOR ||        //
+                op_type == OP_BIT_OR_ASSIGN ||  //
+                op_type == OP_BIT_XOR_ASSIGN || //
+                op_type == OP_BIT_AND_ASSIGN || //
+                op_type == OP_MODULO ||         //
+                op_type == OP_SHIFT_LEFT ||     //
+                op_type == OP_SHIFT_RIGHT ||    //
                 false) {
                 sjit_assert(lhs_ty == rhs_ty);
                 sjit_assert(lhs_ty == u32Ty || lhs_ty == u32x2Ty || lhs_ty == u32x3Ty || lhs_ty == u32x4Ty);
@@ -2435,6 +2465,7 @@ static SharedPtr<FnPrototype> TransposeTy    = FnPrototype::Create("transpose", 
     sjit_assert(argv[0]->IsMatrix());
     return argv[0];
 });
+static SharedPtr<FnPrototype> NonUniformFnTy = FnPrototype::Create("NonUniformResourceIndex", u32Ty, {{"a", u32Ty}});
 static SharedPtr<FnPrototype> IsNanFnTy      = FnPrototype::Create("isnan", WildcardTy_0, {{"a", WildcardTy_1}},
                                                                    [](Array<SharedPtr<Type>> const &argv) { return vector_type_table[BASIC_TYPE_U1][argv[0]->GetVectorSize()]; });
 static SharedPtr<FnPrototype> IsInfFnTy      = FnPrototype::Create("isinf", WildcardTy_0, {{"a", WildcardTy_1}},
@@ -2629,6 +2660,27 @@ public:
         SharedPtr<Expr> argv[] = {expr};
         return Expr::MakeFunction(splat_table[num], argv, SJIT_ARRAYSIZE(argv));
     }
+    ValueExpr operator|=(ValueExpr const &b) {
+        ValueExpr e = (Expr::MakeOp(expr, b.expr, OP_BIT_OR_ASSIGN));
+        if (!IsInScalarBlock()) {
+            expr->scalar_mode = SCALAR_MODE_NON_SCALAR;
+        }
+        return *this;
+    }
+    ValueExpr operator^=(ValueExpr const &b) {
+        ValueExpr e = (Expr::MakeOp(expr, b.expr, OP_BIT_XOR_ASSIGN));
+        if (!IsInScalarBlock()) {
+            expr->scalar_mode = SCALAR_MODE_NON_SCALAR;
+        }
+        return *this;
+    }
+    ValueExpr operator&=(ValueExpr const &b) {
+        ValueExpr e = (Expr::MakeOp(expr, b.expr, OP_BIT_AND_ASSIGN));
+        if (!IsInScalarBlock()) {
+            expr->scalar_mode = SCALAR_MODE_NON_SCALAR;
+        }
+        return *this;
+    }
     ValueExpr operator~() { return Expr::MakeOp(NULL, expr, OP_BIT_NEG); }
     ValueExpr operator!() { return Expr::MakeOp(NULL, expr, OP_LOGICAL_NOT); }
     ValueExpr operator+=(ValueExpr v) {
@@ -2716,8 +2768,11 @@ public:
     ValueExpr operator[](u32 index) { return Get(index); }
     ValueExpr operator[](char const *_field) { return Get(_field); }
     ValueExpr operator[](ValueExpr e) { return Get(e); }
+    ValueExpr NonUniform() {
+        SharedPtr<Expr> argv[] = {expr};
+        return Expr::MakeFunction(NonUniformFnTy, argv, SJIT_ARRAYSIZE(argv));
+    }
 };
-
 #    if 0
 static void IfElse(ValueExpr cond, std::function<void()> if_block, std::function<void()> else_block) {
     using var = ValueExpr;
@@ -3072,6 +3127,44 @@ static void EmitWhileLoop(std::function<void()> _body) {
     _body();
     GetGlobalModule().ExitScope();
     body.EmitF("}\n");
+}
+static ValueExpr RayQueryTransparent(ValueExpr tlas, ValueExpr ray_desc, std::function<ValueExpr(ValueExpr)> _break) {
+    auto     &body = GetGlobalModule().GetBody();
+    ValueExpr w    = Make(RayQuery_Ty);
+    tlas.EmitGlobalHLSL();
+    ray_desc.EmitGlobalHLSL();
+    body << "RayQuery<RAY_FLAG_NONE> ray_query;\n";
+    body << "ray_query.TraceRayInline(" << tlas->name << ", RAY_FLAG_NONE, 0xffu, " << ray_desc->name << ");\n";
+    body << "while (ray_query.Proceed()) {\n";
+    GetGlobalModule().EnterScope();
+    {
+        body << "if (ray_query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {\n";
+        GetGlobalModule().EnterScope();
+        {
+            ValueExpr tmp_w = Make(RayQuery_Ty);
+            body << tmp_w->name << ".hit           = true;\n";
+            body << tmp_w->name << ".bary          = ray_query.CandidateTriangleBarycentrics();\n";
+            body << tmp_w->name << ".ray_t         = ray_query.CandidateTriangleRayT();\n";
+            body << tmp_w->name << ".instance_id   = ray_query.CandidateInstanceID();\n";
+            body << tmp_w->name << ".primitive_idx = ray_query.CandidatePrimitiveIndex();\n";
+            ValueExpr do_break = _break(tmp_w);
+            body << "if (" << do_break->name << ") { ray_query.CommitNonOpaqueTriangleHit(); }\n";
+        }
+        GetGlobalModule().ExitScope();
+        body << "}\n";
+    }
+    GetGlobalModule().ExitScope();
+    body << "}\n";
+
+    body << "if (ray_query.CommittedStatus() != COMMITTED_NOTHING) {\n";
+    body << w->name << ".hit           = true;\n";
+    body << w->name << ".bary          = ray_query.CommittedTriangleBarycentrics();\n";
+    body << w->name << ".ray_t         = ray_query.CommittedRayT();\n";
+    body << w->name << ".instance_id   = ray_query.CommittedInstanceID();\n";
+    body << w->name << ".primitive_idx = ray_query.CommittedPrimitiveIndex();\n";
+    body << "}\n";
+
+    return w;
 }
 static void EmitBreak() {
     sjit_assert(GetGlobalModule().IsInSwitch() == false && "That's just bad");
