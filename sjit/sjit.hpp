@@ -2091,7 +2091,7 @@ public:
 
         } else if (type == EXPRESSION_TYPE_REF) {
         } else if (type == EXPRESSION_TYPE_IF_ELSE) {
-            sjit_assert(lhs && rhs && cond);
+            sjit_assert(bool(lhs) && bool(rhs) && bool(cond));
             cond->EmitHLSL(hlsl_module);
             hlsl.EmitF("%s %s;\n", InferType()->GetName().c_str(), name);
             hlsl.EmitF("if (%s) {\n", cond->name);
@@ -2263,8 +2263,8 @@ public:
                 false                             //
             ) {
 
-                sjit_assert(lhs_ty && rhs_ty);
-                sjit_assert(lhs_ty == rhs_ty);
+                sjit_assert(bool(lhs_ty) && bool(rhs_ty));
+                sjit_assert(bool(lhs_ty) == bool(rhs_ty));
 
                 inferred_type = vector_type_table[BASIC_TYPE_U1][lhs_ty->GetVectorSize()];
             } else {
@@ -2272,7 +2272,7 @@ public:
                     if (lhs_ty) inferred_type = lhs_ty;
                     if (rhs_ty) inferred_type = rhs_ty;
                 } else {
-                    sjit_assert(lhs_ty && rhs_ty);
+                    sjit_assert(bool(lhs_ty) && bool(rhs_ty));
                     if (lhs_ty == rhs_ty) {
                         inferred_type = lhs_ty;
                     } else {
@@ -2610,12 +2610,6 @@ public:
     mutable SharedPtr<Expr> expr = NULL;
 
 public:
-    // ValueExpr(ValueExpr const &b) = default;
-    // ValueExpr const &operator=(ValueExpr const &b) = default;
-    /*ValueExpr operator=(ValueExpr &b) {
-        expr = {Expr::MakeOp(expr, b.expr, OP_ASSIGN)};
-        return *this;
-    }*/
     SharedPtr<Expr> operator->() { return expr; }
 
     void EmitGlobalHLSL() {
@@ -2629,14 +2623,6 @@ public:
         expr = Expr::MakeLiteral(v);
         EmitGlobalHLSL();
     }
-#    if 0
-    static ValueExpr Return() { return Expr::Create(EXPRESSION_TYPE_RETURN); }
-    static ValueExpr If(ValueExpr v) { return Expr::MakeIf(v.expr); }
-    static ValueExpr Else() { return Expr::MakeElse(); }
-#    endif // 0
-
-    // static ValueExpr IfElse(ValueExpr _cond, ValueExpr _lhs, ValueExpr _rhs) { return Expr::MakeIfElse(_cond.expr, _lhs.expr, _rhs.expr); }
-
     ValueExpr Sample(ValueExpr const &sampler, ValueExpr const &uv) {
         // sjit_assert(expr->type == EXPRESSION_TYPE_RESOURCE);
         // sjit_assert(expr->resource->GetType()->GetResType() == RES_TEXTURE);
@@ -3099,64 +3085,28 @@ static ValueExpr EmitArray(SharedPtr<Type> _type, u32 _num) {
     GetGlobalModule().GetBody().EmitF("%s %s[%i];\n", _type->GetName().c_str(), e->name, _num);
     return e;
 }
-
-static ValueExpr operator^(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_BIT_XOR)}; }
-static ValueExpr operator+(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_PLUS)}; }
-static ValueExpr operator-(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_MINUS)}; }
-static ValueExpr operator-(ValueExpr const &a) { return {Expr::MakeOp(NULL, a.expr, OP_MINUS)}; }
-static ValueExpr operator+(ValueExpr const &a) { return {Expr::MakeOp(NULL, a.expr, OP_PLUS)}; }
-static ValueExpr operator*(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_MUL)}; }
-static ValueExpr operator/(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_DIV)}; }
-static ValueExpr operator<(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_LESS)}; }
-static ValueExpr operator<=(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_LESS_OR_EQUAL)}; }
-static ValueExpr operator>(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_GREATER)}; }
-static ValueExpr operator>=(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_GREATER_OR_EQUAL)}; }
-static ValueExpr operator&&(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_LOGICAL_AND)}; }
-static ValueExpr operator||(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_LOGICAL_OR)}; }
-static ValueExpr operator&(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_BIT_AND)}; }
-static ValueExpr operator|(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_BIT_OR)}; }
-static ValueExpr operator<<(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_SHIFT_LEFT)}; }
-static ValueExpr operator>>(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_SHIFT_RIGHT)}; }
-static ValueExpr operator==(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_EQUAL)}; }
-static ValueExpr operator!=(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_NOT_EQUAL)}; }
-static ValueExpr operator%(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_MODULO)}; }
-
-static ValueExpr square(ValueExpr a) { return a * a; }
-static ValueExpr var_f32x3_splat(ValueExpr p) { return make_f32x3(p, p, p); }
-// clang-format off
-
-//template<typename T> ValueExpr   operator+(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_PLUS)}; }
-//template<typename T> ValueExpr   operator-(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_MINUS)}; }
-//template<typename T> ValueExpr   operator*(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_MUL)}; }
-//template<typename T> ValueExpr   operator/(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_DIV)}; }
-//template<typename T> ValueExpr   operator<(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_LESS)}; }
-//template<typename T> ValueExpr   operator<=(ValueExpr a, T b) { return {Expr::MakeOp(a.expr, ValueExpr(b).expr, OP_LESS_OR_EQUAL)}; }
-//template<typename T> ValueExpr   operator>(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_GREATER)}; }
-//template<typename T> ValueExpr   operator>=(ValueExpr a, T b) { return {Expr::MakeOp(a.expr, ValueExpr(b).expr, OP_GREATER_OR_EQUAL)}; }
-//template<typename T> ValueExpr   operator&&(ValueExpr a, T b) { return {Expr::MakeOp(a.expr, ValueExpr(b).expr, OP_LOGICAL_AND)}; }
-//template<typename T> ValueExpr   operator||(ValueExpr a, T b) { return {Expr::MakeOp(a.expr, ValueExpr(b).expr, OP_LOGICAL_OR)}; }
-//template<typename T> ValueExpr   operator&(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_BIT_AND)}; }
-//template<typename T> ValueExpr   operator|(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_BIT_OR)}; }
-//template<typename T> ValueExpr   operator==(ValueExpr a, T b) { return {Expr::MakeOp(a.expr, ValueExpr(b).expr, OP_EQUAL)}; }
-//template<typename T> ValueExpr   operator!=(ValueExpr a, T b) { return {Expr::MakeOp(a.expr, ValueExpr(b).expr, OP_NOT_EQUAL)}; }
-//
-//template<typename T> ValueExpr   operator+(T a, ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_PLUS)}; }
-//template<typename T> ValueExpr   operator-(T a, ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_MINUS)}; }
-//template<typename T> ValueExpr   operator*(T a, ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_MUL)}; }
-//template<typename T> ValueExpr   operator/(T a, ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_DIV)}; }
-//template<typename T> ValueExpr   operator<(T a, ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_LESS)}; }
-//template<typename T> ValueExpr  operator<=(T a,ValueExpr b) { return  {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_LESS_OR_EQUAL)}; }
-//template<typename T> ValueExpr   operator>(T a, ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_GREATER)}; }
-//template<typename T> ValueExpr   operator>=(T  a,ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_GREATER_OR_EQUAL)}; }
-//template<typename T> ValueExpr   operator&&(T  a,ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_LOGICAL_AND)}; }
-//template<typename T> ValueExpr   operator||(T  a,ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_LOGICAL_OR)}; }
-//template<typename T> ValueExpr   operator&(T a, ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_BIT_AND)}; }
-//template<typename T> ValueExpr   operator|(T a, ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_BIT_OR)}; }
-//template<typename T> ValueExpr   operator==(T  a,ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_EQUAL)}; }
-//template<typename T> ValueExpr   operator!=(T  a,ValueExpr b) { return {Expr::MakeOp(ValueExpr(a).expr, b.expr, OP_NOT_EQUAL)}; }
-
-// clang-format on
-
+static ValueExpr   operator^(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_BIT_XOR)}; }
+static ValueExpr   operator+(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_PLUS)}; }
+static ValueExpr   operator-(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_MINUS)}; }
+static ValueExpr   operator-(ValueExpr const &a) { return {Expr::MakeOp(NULL, a.expr, OP_MINUS)}; }
+static ValueExpr   operator+(ValueExpr const &a) { return {Expr::MakeOp(NULL, a.expr, OP_PLUS)}; }
+static ValueExpr   operator*(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_MUL)}; }
+static ValueExpr   operator/(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_DIV)}; }
+static ValueExpr   operator<(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_LESS)}; }
+static ValueExpr   operator<=(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_LESS_OR_EQUAL)}; }
+static ValueExpr   operator>(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_GREATER)}; }
+static ValueExpr   operator>=(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_GREATER_OR_EQUAL)}; }
+static ValueExpr   operator&&(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_LOGICAL_AND)}; }
+static ValueExpr   operator||(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_LOGICAL_OR)}; }
+static ValueExpr   operator&(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_BIT_AND)}; }
+static ValueExpr   operator|(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_BIT_OR)}; }
+static ValueExpr   operator<<(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_SHIFT_LEFT)}; }
+static ValueExpr   operator>>(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_SHIFT_RIGHT)}; }
+static ValueExpr   operator==(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_EQUAL)}; }
+static ValueExpr   operator!=(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_NOT_EQUAL)}; }
+static ValueExpr   operator%(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_MODULO)}; }
+static ValueExpr   square(ValueExpr a) { return a * a; }
+static ValueExpr   var_f32x3_splat(ValueExpr p) { return make_f32x3(p, p, p); }
 static HLSLModule &operator<<(HLSLModule &m, ValueExpr &a) {
     a->EmitHLSL(m);
     return m;
