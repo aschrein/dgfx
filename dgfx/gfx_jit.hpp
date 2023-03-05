@@ -33,7 +33,7 @@
 #    include "file_io.hpp"
 #    include "gfx_utils.hpp"
 #    include "gizmo.hpp"
-#    include "jit.hpp"
+#    include "sjit/sjit.hpp"
 
 #    include <filesystem>
 

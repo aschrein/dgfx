@@ -26,13 +26,14 @@
 #    undef min
 #    undef max
 
-#    include "half.hpp"
+#    if !defined(GLM_SETUP_INCLUDED)
+#        include "3rdparty/glm/glm.hpp"
+#    endif // !defined (GLM_SETUP_INCLUDED)
+#    include "3rdparty/half.hpp"
+#    include "3rdparty/robin-map/include/tsl/robin_map.h"
+#    include "3rdparty/robin-map/include/tsl/robin_set.h"
 #    include <dxgiformat.h>
-#    include <glm/glm.hpp>
 #    include <stdarg.h>
-// #    include "unordered_dense.h"
-#    include "robin-map/include/tsl/robin_map.h"
-#    include "robin-map/include/tsl/robin_set.h"
 
 #    if !defined(ifor)
 #        define ifor(N) for (u32 i = u32(0); i < ((u32)(N)); ++i)
