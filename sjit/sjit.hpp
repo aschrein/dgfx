@@ -23,10 +23,13 @@
 #if !defined(JIT_HPP)
 #    define JIT_HPP
 
+#    pragma warning(disable : 4244)
+
 #    undef min
 #    undef max
 
 #    if !defined(GLM_SETUP_INCLUDED)
+#        include "3rdparty/glm/ext.hpp"
 #        include "3rdparty/glm/glm.hpp"
 #    endif // !defined (GLM_SETUP_INCLUDED)
 #    include "3rdparty/half.hpp"
@@ -134,6 +137,23 @@ using i32x2   = glm::ivec2;
 using i32x3   = glm::ivec3;
 using i32x4   = glm::ivec4;
 using namespace glm;
+
+static constexpr float PI                  = float(3.1415926);
+static constexpr float TWO_PI              = float(6.2831852);
+static constexpr float FOUR_PI             = float(12.566370);
+static constexpr float INV_PI              = float(0.3183099);
+static constexpr float INV_TWO_PI          = float(0.1591549);
+static constexpr float INV_FOUR_PI         = float(0.0795775);
+static constexpr float DIELECTRIC_SPECULAR = float(0.04);
+
+static f32x4 f32x4_splat(f32 a) { return f32x4(a, a, a, a); }
+static f32x3 f32x3_splat(f32 a) { return f32x3(a, a, a); }
+static f32x2 f32x2_splat(f32 a) { return f32x2(a, a); }
+static u32x4 u32x4_splat(u32 a) { return u32x4(a, a, a, a); }
+static u32x3 u32x3_splat(u32 a) { return u32x3(u32(a), u32(a), u32(a)); }
+static f32x2 f32x2_splat(f64 a) { return f32x2(f32(a), f32(a)); }
+static f32x3 f32x3_splat(f64 a) { return f32x3(f32(a), f32(a), f32(a)); }
+static f32x4 f32x4_splat(f64 a) { return f32x4(f32(a), f32(a), f32(a), f32(a)); }
 
 template <typename T>
 class SharedPtr {
@@ -974,10 +994,10 @@ class Expr;
 class HLSLModule;
 
 #    define SJIT_DONT_MOVE(class_name)                                                                                                                                             \
-        class_name(class_name const &)                  = delete;                                                                                                                  \
-        class_name(class_name &&)                       = delete;                                                                                                                  \
+        class_name(class_name const &) = delete;                                                                                                                                   \
+        class_name(class_name &&)      = delete;                                                                                                                                   \
         class_name const &operator=(class_name const &) = delete;                                                                                                                  \
-        class_name const &operator=(class_name &&)      = delete;
+        class_name const &operator=(class_name &&) = delete;
 
 class SimpleWriter {
 private:
@@ -1135,10 +1155,10 @@ public:
     HashMap<String, SharedPtr<Resource>> const &GetResources() { return resources; }
     HashMap<String, SharedPtr<Type>> const     &GetTypes() { return types; }
 
-    HLSLModule(HLSLModule const &)                  = delete;
-    HLSLModule(HLSLModule &&)                       = delete;
+    HLSLModule(HLSLModule const &) = delete;
+    HLSLModule(HLSLModule &&)      = delete;
     HLSLModule const &operator=(HLSLModule const &) = delete;
-    HLSLModule const &operator=(HLSLModule &&)      = delete;
+    HLSLModule const &operator=(HLSLModule &&) = delete;
     HLSLModule() { emitted.push_back({}); }
     ~HLSLModule() { sjit_assert(function_stack.size() == u64(0)); }
     u32x3 GetGroupSize() { return group_size; }
@@ -2388,12 +2408,12 @@ static SharedPtr<FnPrototype> SampleTy = FnPrototype::Create(
 static SharedPtr<FnPrototype> PowTy           = FnPrototype::Create("pow", WildcardTy_0, {{"a", WildcardTy_0}, {"b", WildcardTy_1}}, [](Array<SharedPtr<Type>> const &argv) {
     sjit_assert(argv[1] == f32Ty && argv[0]->GetBasicTy() == BASIC_TYPE_F32 || argv[1] == f16Ty && argv[0]->GetBasicTy() == BASIC_TYPE_F16);
     return argv[0];
-});
+          });
 static SharedPtr<FnPrototype> ExpTy           = FnPrototype::Create("exp", WildcardTy_0, {{"a", WildcardTy_0}}, [](Array<SharedPtr<Type>> const &argv) { return argv[0]; });
 static SharedPtr<FnPrototype> DotTy           = FnPrototype::Create("dot", WildcardTy_1, {{"a", WildcardTy_0}, {"b", WildcardTy_0}}, [](Array<SharedPtr<Type>> const &argv) {
     sjit_assert(argv[1] == argv[0]);
     return vector_type_table[argv[0]->GetBasicTy()][1];
-});
+          });
 static SharedPtr<FnPrototype> GetDimensionsTy = FnPrototype::Create(
     "GetDimensions", WildcardTy_1, {{"texture", WildcardTy_0}},
     [](Array<SharedPtr<Type>> const &argv) { return vector_type_table[BASIC_TYPE_U32][GetNumDims(argv[0]->GetDimType())]; },
@@ -2420,11 +2440,11 @@ static SharedPtr<FnPrototype> f16_to_u32_FnTy = FnPrototype::Create("f16_to_u32_
     hlsl_module.GetBody().EmitF("u32(f32tof16(%s))", argv[0]->name);
 });
 static SharedPtr<FnPrototype> ConvertToU32Ty  = FnPrototype::Create(
-    "ConvertToU32", WildcardTy_0, {{"a", WildcardTy_1}}, [](Array<SharedPtr<Type>> const &argv) { return vector_type_table[BASIC_TYPE_U32][argv[0]->GetVectorSize()]; },
-    [](HLSLModule &hlsl_module, Array<SharedPtr<Expr>> const &argv) {
+     "ConvertToU32", WildcardTy_0, {{"a", WildcardTy_1}}, [](Array<SharedPtr<Type>> const &argv) { return vector_type_table[BASIC_TYPE_U32][argv[0]->GetVectorSize()]; },
+     [](HLSLModule &hlsl_module, Array<SharedPtr<Expr>> const &argv) {
         auto ty = vector_type_table[BASIC_TYPE_U32][argv[0]->InferType()->GetVectorSize()];
         hlsl_module.GetBody().EmitF("%s(%s)", ty->GetName().c_str(), argv[0]->name);
-    });
+     });
 static SharedPtr<FnPrototype> BitcastToU32Ty = FnPrototype::Create(
     "BitcastToU32", WildcardTy_0, {{"a", WildcardTy_1}}, [](Array<SharedPtr<Type>> const &argv) { return vector_type_table[BASIC_TYPE_U32][argv[0]->GetVectorSize()]; },
     [](HLSLModule &hlsl_module, Array<SharedPtr<Expr>> const &argv) { hlsl_module.GetBody().EmitF("asu32(%s)", argv[0]->name); });
@@ -2496,7 +2516,7 @@ static SharedPtr<FnPrototype> NormalizeFnTy  = FnPrototype::Create("normalize", 
 static SharedPtr<FnPrototype> TransposeTy    = FnPrototype::Create("transpose", WildcardTy_0, {{"a", WildcardTy_0}}, [](Array<SharedPtr<Type>> const &argv) {
     sjit_assert(argv[0]->IsMatrix());
     return argv[0];
-});
+   });
 static SharedPtr<FnPrototype> NonUniformFnTy = FnPrototype::Create("NonUniformResourceIndex", u32Ty, {{"a", u32Ty}});
 static SharedPtr<FnPrototype> IsNanFnTy      = FnPrototype::Create("isnan", WildcardTy_0, {{"a", WildcardTy_1}},
                                                                    [](Array<SharedPtr<Type>> const &argv) { return vector_type_table[BASIC_TYPE_U1][argv[0]->GetVectorSize()]; });
@@ -2542,7 +2562,7 @@ static SharedPtr<FnPrototype> MulFnTy                = FnPrototype::Create("mul"
                                                                 if (args[0] == f32x4x4Ty && args[1] == f32x4x4Ty) return f32x4x4Ty;
 
                                                                 SJIT_TRAP;
-                                                            });
+                                                                           });
 static SharedPtr<FnPrototype> GetTBNFnTy             = FnPrototype::Create("__get_tbn", f32x3x3Ty, {{"N", f32x3Ty}});
 static SharedPtr<FnPrototype> InterpolateFnTy =
     FnPrototype::Create("__interpolate", WildcardTy_0, {{"a", WildcardTy_0}, {"b", WildcardTy_0}, {"c", WildcardTy_0}, {"bary", f32x2Ty}}, //
@@ -3773,9 +3793,9 @@ static BasicType GetBasicType(DXGI_FORMAT fmt) {
 }
 #    endif // defined(__dxgiformat_h__)
 
-#    define GFX_JIT_MAKE_RESOURCE(name, type) var name = ResourceAccess(Resource::Create(type, #name))
-#    define GFX_JIT_MAKE_GLOBAL_RESOURCE(name, type) static var name = ResourceAccess(Resource::Create(type, #name))
-#    define GFX_JIT_MAKE_GLOBAL_RESOURCE_ARRAY(name, type) static var name = ResourceAccess(Resource::CreateArray(Resource::Create(type, "elem_" #name), #name))
+#    define GFX_JIT_MAKE_RESOURCE(name, type) var name = ResourceAccess(Resource::Create(type, #    name))
+#    define GFX_JIT_MAKE_GLOBAL_RESOURCE(name, type) static var name = ResourceAccess(Resource::Create(type, #    name))
+#    define GFX_JIT_MAKE_GLOBAL_RESOURCE_ARRAY(name, type) static var name = ResourceAccess(Resource::CreateArray(Resource::Create(type, "elem_" #    name), #    name))
 
 static u32 LSB(u32 v) {
     static const int MultiplyDeBruijnBitPosition[32] = {0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9};
@@ -3937,20 +3957,20 @@ static var xxhash32(var p) {
 
 static u32                halton_sample_count = u32(15);
 static std::vector<i32x2> halton_samples      = {i32x2(0, 1),   //
-                                                 i32x2(-2, 1),  //
-                                                 i32x2(2, -3),  //
-                                                 i32x2(-3, 0),  //
-                                                 i32x2(1, 2),   //
-                                                 i32x2(-1, -2), //
-                                                 i32x2(3, 0),   //
-                                                 i32x2(-3, 3),  //
-                                                 i32x2(0, -3),  //
-                                                 i32x2(-1, -1), //
-                                                 i32x2(2, 1),   //
-                                                 i32x2(-2, -2), //
-                                                 i32x2(1, 0),   //
-                                                 i32x2(0, 2),   //
-                                                 i32x2(3, -1)};
+                                            i32x2(-2, 1),  //
+                                            i32x2(2, -3),  //
+                                            i32x2(-3, 0),  //
+                                            i32x2(1, 2),   //
+                                            i32x2(-1, -2), //
+                                            i32x2(3, 0),   //
+                                            i32x2(-3, 3),  //
+                                            i32x2(0, -3),  //
+                                            i32x2(-1, -1), //
+                                            i32x2(2, 1),   //
+                                            i32x2(-2, -2), //
+                                            i32x2(1, 0),   //
+                                            i32x2(0, 2),   //
+                                            i32x2(3, -1)};
 static void               Init_LDS_16x16(var &lds, std::function<var(var)> init_fn) {
     var  tid        = Input(IN_TYPE_DISPATCH_THREAD_ID)["xy"];
     var  gid        = Input(IN_TYPE_GROUP_THREAD_ID)["xy"];
