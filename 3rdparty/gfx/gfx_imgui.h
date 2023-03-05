@@ -47,6 +47,8 @@ bool gfxImGuiIsInitialized();
 struct GfxImguiTextureParameters {
     bool disable_alpha = false;
     uint32_t slice = uint32_t(0);
+    //float uv_min[2] = {0.0f, 0.0f};
+    //float uv_max[2] = {1.0f, 1.0f};
 
     static std::unordered_map<GfxTexture const *, GfxImguiTextureParameters> &GetConfig() {
         static std::unordered_map<GfxTexture const *, GfxImguiTextureParameters> config = {};

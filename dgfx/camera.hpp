@@ -73,7 +73,6 @@ struct Camera {
     f32x3 right     = {};
     f32x3 up        = {};
     i32x2 last_mpos = {};
-    f32x2 mouse_uv  = {};
 
     f32x4x4 prev_proj          = {};
     f32x4x4 prev_inv_proj      = {};
@@ -89,7 +88,9 @@ struct Camera {
     f32x4x4 view_proj     = {};
     f32x4x4 inv_view_proj = {};
 
-    void UpdateMatrices(f32x2 jitter = f32x2(0.0, 0.0)) {
+    f32x2 jitter = f32x2(0.0, 0.0);
+
+    void UpdateMatrices() {
 
         look  = normalize(look_at - pos);
         right = normalize(cross(look, f32x3(0.0, 1.0, 0.0)));
@@ -170,17 +171,13 @@ struct Camera {
         if (dot(camera_diff, camera_diff) > f32(1.0e-6)) {
             look_at += glm::normalize(camera_diff) * camera_speed * dt;
         }
+
         ImVec2 impos = ImGui::GetMousePos();
         auto   wpos  = ImGui::GetCursorScreenPos();
-        //auto   wsize = ImGui::GetWindowSize();
         impos.x -= wpos.x;
         impos.y -= wpos.y;
         i32x2 mpos = i32x2(impos.x, impos.y);
         f32x2 uv   = f32x2(mpos.x, mpos.y);
-        uv /= resolution;
-        uv       = f32(2.0) * uv - f32x2(1.0, 1.0);
-        uv.y     = -uv.y;
-        mouse_uv = uv;
 
         if (io.MouseDown[0] && (io.MouseDelta[0] != 0 || io.MouseDelta[1] != 0)) {
             i32 dx = mpos.x - last_mpos.x;

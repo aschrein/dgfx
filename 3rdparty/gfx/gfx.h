@@ -303,6 +303,7 @@ GfxKernel gfxCreateComputeKernel(GfxContext context, GfxProgram program, char co
 GfxKernel gfxCreateGraphicsKernel(GfxContext context, GfxProgram program, char const *entry_point = nullptr, char const **defines = nullptr, uint32_t define_count = 0);    // draws to back buffer
 GfxKernel gfxCreateGraphicsKernel(GfxContext context, GfxProgram program, GfxDrawState draw_state, char const *entry_point = nullptr, char const **defines = nullptr, uint32_t define_count = 0);
 char const *gfxKernelGetIsa(GfxContext context, GfxKernel kernel);
+void   *gfxKernelGetComputeBytecode(GfxContext context, GfxKernel kernel);
 GfxResult gfxDestroyKernel(GfxContext context, GfxKernel kernel);
 
 uint32_t const *gfxKernelGetNumThreads(GfxContext context, GfxKernel kernel);
@@ -2567,6 +2568,12 @@ public:
         if (!kernel) return NULL;
         if (!kernel_handles_.has_handle(kernel.handle)) return NULL;
         return kernels_[kernel].isa_.c_str();
+    }
+
+    IDxcBlob *gfxKernelGetComputeBytecode(GfxKernel kernel) {
+        if (!kernel) return NULL;
+        if (!kernel_handles_.has_handle(kernel.handle)) return NULL;
+        return kernels_[kernel].cs_bytecode_;
     }
 
     GfxResult destroyKernel(GfxKernel const &kernel)
@@ -8152,6 +8159,13 @@ char const *gfxKernelGetIsa(GfxContext context, GfxKernel kernel)
     GfxInternal    *gfx            = GfxInternal::GetGfx(context);
     if (!gfx) return NULL; // invalid context
     return gfx->gfxKernelGetIsa(kernel);
+}
+
+void *gfxKernelGetComputeBytecode(GfxContext context, GfxKernel kernel)
+{
+    GfxInternal *gfx = GfxInternal::GetGfx(context);
+    if (!gfx) return NULL; // invalid context
+    return gfx->gfxKernelGetComputeBytecode(kernel);
 }
 
 GfxKernel gfxCreateComputeKernel(GfxContext context, GfxProgram program, char const *entry_point, char const **defines, uint32_t define_count, char const **includes, uint32_t include_count)

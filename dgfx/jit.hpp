@@ -27,6 +27,7 @@
 #    undef max
 
 #    include "half.hpp"
+#    include <dxgiformat.h>
 #    include <glm/glm.hpp>
 #    include <stdarg.h>
 // #    include "unordered_dense.h"
@@ -926,10 +927,14 @@ public:
 
 class Resource {
 private:
-    SharedPtr<Resource> elem_type = {};
-    SharedPtr<Type>     type      = {};
-    String              name      = {};
-    bool                is_array  = false;
+    SharedPtr<Resource> elem_type  = {};
+    SharedPtr<Type>     type       = {};
+    String              name       = {};
+    bool                is_array   = false;
+    u32                 array_size = u32(-1);
+    u32                 dxreg      = u32(-1);
+    u32                 space      = u32(-1);
+    char                letter     = char(0);
 
 public:
     SJIT_REFERENCE_COUNTER_IMPL;
@@ -954,6 +959,10 @@ public:
         o->is_array  = true;
         return o;
     }
+    u32                 GetArraySize() { return array_size; }
+    u32                 GetDXReg() { return dxreg; };
+    u32                 GetSpace() { return space; }
+    char                GetLetter() { return letter; }
     bool                IsArray() { return is_array; }
     String const       &GetName() { return name; }
     SharedPtr<Type>     GetType() { return type; }
@@ -988,6 +997,7 @@ public:
 #    undef _CRT_SECURE_NO_WARNINGS
         va_end(args);
     }
+    void Reset() { buf_cursor = u64(0); }
     void Write(char const *str) {
         u64 len = strlen(str);
         memcpy(buf + buf_cursor, str, len);
@@ -1141,9 +1151,9 @@ public:
         if (function_stack.size()) return *function_stack.back();
         return body;
     }
-    char const *Finalize() {
-        if (is_finalized) return final_text.Finalize();
-
+    char const *Finalize(bool _emit_resources = true) {
+        // if (is_finalized) return final_text.Finalize();
+        final_text.Reset();
         final_text.Write(R"(
 #        define f32 float
 #        define f32x2 float2
@@ -1270,54 +1280,75 @@ f32x3x3 __get_tbn(f32x3 N) {
                 final_text.EmitF("groupshared %s %s;\n", l.second->GetName().c_str(), l.first.c_str());
             }
         }
-        u32 array_space = u32(99);
-        for (auto &r : GetResources()) {
-            if (r.second->GetType()->GetBasicTy() == BASIC_TYPE_ARRAY) {
-                if (r.second->GetType()->GetElemType()->GetResType() == RES_TEXTURE) {
-                    if (r.second->IsArray()) {
-                        final_text.EmitF("%s<", r.second->GetType()->GetElemType()->GetName().c_str());
-                        final_text.EmitF("%s> ", r.second->GetType()->GetElemType()->GetTemplateType()->GetName().c_str());
-                        final_text.EmitF("%s[] : register(space%i);\n", r.first.c_str(), array_space);
-                        array_space++;
+        if (_emit_resources) {
+            u32 array_space = u32(99);
+            for (auto &r : GetResources()) {
+                if (r.second->GetType()->GetBasicTy() == BASIC_TYPE_ARRAY) {
+                    if (r.second->GetType()->GetElemType()->GetResType() == RES_TEXTURE) {
+                        if (r.second->IsArray()) {
+                            final_text.EmitF("%s<", r.second->GetType()->GetElemType()->GetName().c_str());
+                            final_text.EmitF("%s> ", r.second->GetType()->GetElemType()->GetTemplateType()->GetName().c_str());
+                            if (r.second->GetArraySize() == u32(-1))
+                                final_text.EmitF("%s[] : register(space%i);\n", r.first.c_str(), array_space);
+                            else {
+                                final_text.EmitF("%s[%i] ", r.first.c_str(), r.second->GetArraySize());
+                                if (r.second->GetSpace() != u32(-1) || (r.second->GetDXReg() != u32(-1) && r.second->GetLetter() != char(0))) {
+                                    final_text.EmitF("register(");
+                                    bool has_letter = false;
+                                    if (r.second->GetDXReg() != u32(-1) && r.second->GetLetter() != char(0)) {
+                                        final_text.EmitF("%c%i", r.second->GetLetter(), r.second->GetSpace());
+                                        has_letter = true;
+                                    }
+                                    if (r.second->GetSpace() != u32(-1)) {
+                                        if (has_letter) final_text.EmitF(", ");
+                                        final_text.EmitF("space%i", r.second->GetSpace());
+                                    }
+                                }
+                                final_text.EmitF("\n");
+                            }
+                            array_space++;
+                        } else {
+                            SJIT_UNIMPLEMENTED;
+                        }
                     } else {
                         SJIT_UNIMPLEMENTED;
                     }
-                } else {
-                    SJIT_UNIMPLEMENTED;
-                }
-            } else if (r.second->GetType()->GetBasicTy() == BASIC_TYPE_RESOURCE) {
-                if (r.second->GetType()->GetResType() == RES_TEXTURE) {
-                    if (r.second->IsArray()) {
-                        SJIT_UNIMPLEMENTED;
-                    } else {
+                } else if (r.second->GetType()->GetBasicTy() == BASIC_TYPE_RESOURCE) {
+                    if (r.second->GetType()->GetResType() == RES_TEXTURE) {
+                        if (r.second->IsArray()) {
+                            SJIT_UNIMPLEMENTED;
+                        } else {
+                            final_text.EmitF("%s<", r.second->GetType()->GetName().c_str());
+                            final_text.EmitF("%s> ", r.second->GetType()->GetTemplateType()->GetName().c_str());
+                            final_text.EmitF("%s;\n", r.first.c_str());
+                        }
+                    } else if (r.second->GetType()->GetResType() == RES_SAMPLER) {
+                        sjit_assert(r.second->IsArray() == false);
+                        final_text.EmitF("%s ", r.second->GetType()->GetName().c_str());
+                        final_text.EmitF("%s;\n", r.first.c_str());
+                    } else if (r.second->GetType()->GetResType() == RES_BUFFER) {
+                        sjit_assert(r.second->IsArray() == false);
                         final_text.EmitF("%s<", r.second->GetType()->GetName().c_str());
                         final_text.EmitF("%s> ", r.second->GetType()->GetTemplateType()->GetName().c_str());
                         final_text.EmitF("%s;\n", r.first.c_str());
+                    } else if (r.second->GetType()->GetResType() == RES_TLAS) {
+                        sjit_assert(r.second->IsArray() == false);
+                        final_text.EmitF("%s ", r.second->GetType()->GetName().c_str());
+                        final_text.EmitF("%s;\n", r.first.c_str());
+                    } else {
+                        SJIT_UNIMPLEMENTED;
                     }
-                } else if (r.second->GetType()->GetResType() == RES_SAMPLER) {
-                    sjit_assert(r.second->IsArray() == false);
-                    final_text.EmitF("%s ", r.second->GetType()->GetName().c_str());
-                    final_text.EmitF("%s;\n", r.first.c_str());
-                } else if (r.second->GetType()->GetResType() == RES_BUFFER) {
-                    sjit_assert(r.second->IsArray() == false);
-                    final_text.EmitF("%s<", r.second->GetType()->GetName().c_str());
-                    final_text.EmitF("%s> ", r.second->GetType()->GetTemplateType()->GetName().c_str());
-                    final_text.EmitF("%s;\n", r.first.c_str());
-                } else if (r.second->GetType()->GetResType() == RES_TLAS) {
+                } else if (r.second->GetType()->GetBasicTy() == BASIC_TYPE_U32 || //
+                           r.second->GetType()->GetBasicTy() == BASIC_TYPE_F32) {
                     sjit_assert(r.second->IsArray() == false);
                     final_text.EmitF("%s ", r.second->GetType()->GetName().c_str());
                     final_text.EmitF("%s;\n", r.first.c_str());
                 } else {
                     SJIT_UNIMPLEMENTED;
                 }
-            } else if (r.second->GetType()->GetBasicTy() == BASIC_TYPE_U32 || //
-                       r.second->GetType()->GetBasicTy() == BASIC_TYPE_F32) {
-                sjit_assert(r.second->IsArray() == false);
-                final_text.EmitF("%s ", r.second->GetType()->GetName().c_str());
-                final_text.EmitF("%s;\n", r.first.c_str());
-            } else {
-                SJIT_UNIMPLEMENTED;
             }
+        } else {
+            final_text.EmitF("RESOURCE_STAB\n");
         }
         final_text.Write(header.Finalize());
         final_text.Write(function_body.Finalize());
@@ -3070,7 +3101,7 @@ static ValueExpr operator!=(ValueExpr const &a, ValueExpr const &b) { return {Ex
 static ValueExpr operator%(ValueExpr const &a, ValueExpr const &b) { return {Expr::MakeOp(a.expr, b.expr, OP_MODULO)}; }
 
 static ValueExpr square(ValueExpr a) { return a * a; }
-static ValueExpr f32x3_splat(ValueExpr p) { return make_f32x3(p, p, p); }
+static ValueExpr var_f32x3_splat(ValueExpr p) { return make_f32x3(p, p, p); }
 // clang-format off
 
 //template<typename T> ValueExpr   operator+(ValueExpr a, T b) { return {Expr::MakeOp(a.expr,  ValueExpr(b).expr, OP_PLUS)}; }
@@ -3299,6 +3330,7 @@ static void EmitSwitchCase(ValueExpr _val, Array<std::pair<u32, std::function<vo
     GetGlobalModule().ExitSwitchScope();
     GetGlobalModule().ExitScope();
 }
+using var = ValueExpr;
 static ValueExpr MakeIfElse(ValueExpr _cond, ValueExpr _if, ValueExpr _else) { return ValueExpr(Expr::MakeIfElse(_cond.expr, _if.expr, _else.expr)); }
 static ValueExpr AllocateLDS(SharedPtr<Type> _type, u32 _num_elems, String const &_name) {
     SharedPtr<Type> lds_type = _type;
@@ -3312,7 +3344,6 @@ static ValueExpr AllocateLDS(SharedPtr<Type> _type, u32 _num_elems, String const
 }
 static ValueExpr EmitBinarySearch(ValueExpr _buffer, ValueExpr _num_items, ValueExpr _offset) {
     // auto &body = GetGlobalModule().GetBody();
-    using var  = ValueExpr;
     var result = var(u32(0));
     GetGlobalModule().EnterScope();
     {
@@ -3345,6 +3376,595 @@ static ValueExpr UnpackU32ToF16x2(ValueExpr _v) {
     return v;
 }
 static ValueExpr GetLuminance(ValueExpr v) { return max(f32(1.0e-3), dot(v, f32x3(0.299, 0.587, 0.114))); }
+// https://knarkowicz.wordpress.com/2014/04/16/octahedron-normal-vector-encoding/
+struct Octahedral {
+    static var Sign(var v) { return MakeIfElse(v >= f32(0.0), f32(1.0), f32(-1.0)); }
+    static var OctWrap(var v) {
+        var tmp = make_f32x2(Sign(v.x()), Sign(v.y()));
+        return (f32x2(1.0, 1.0) - abs(var(v.yx()))) * tmp;
+    }
+    static var Encode(var n) {
+        n /= (abs(n.x()) + abs(n.y()) + abs(n.z()));
+        n.xy() = MakeIfElse(n.z() >= f32(0.0), n.xy(), OctWrap(n.xy()));
+        n.xy() = n.xy() * f32(0.5) + f32x2(0.5, 0.5);
+        return n.xy();
+    }
+    static var Decode(var f) {
+        f = f * f32(2.0) - f32x2(1.0, 1.0);
+
+        // https://twitter.com/Stubbesaurus/status/937994790553227264
+        var n = make_f32x3(f.x(), f.y(), f32(1.0) - abs(f.x()) - abs(f.y()));
+        var t = saturate(-n.z());
+        n.xy() += make_f32x2(Sign(n.x()), Sign(n.y())) * -t;
+        return normalize(n);
+    }
+    static var EncodeNormalTo16Bits(var n) {
+        var encoded = Encode(n);
+        var ux      = (saturate(encoded.x()) * f32(255.0)).ToU32();
+        var uy      = (saturate(encoded.y()) * f32(255.0)).ToU32();
+        return ux | (uy << u32(8));
+    }
+    static var DecodeNormalFrom16Bits(var uxy) {
+        var ux = uxy & u32(0xff);
+        var uy = (uxy >> u32(8)) & u32(0xff);
+        var x  = ux.ToF32() / f32(255.0);
+        var y  = uy.ToF32() / f32(255.0);
+        return Decode(make_f32x2(x, y));
+    }
+};
+
+// https://google.github.io/filament/Filament.md.html#materialsystem/dielectricsandconductors
+// http://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
+// Don't mess up srgb roughness
+struct GGXHelper {
+    var NdotL;
+    var NdotV;
+    var LdotH;
+    var VdotH;
+    var NdotH;
+
+    void Init(var L, var N, var V) {
+        var H = normalize(L + V);
+        LdotH = saturate(dot(L, H));
+        VdotH = saturate(dot(V, H));
+        NdotV = saturate(dot(N, V));
+        NdotH = saturate(dot(N, H));
+        NdotL = saturate(dot(N, L));
+    }
+    static var _GGX_G(var a2, var XdotY) {
+        return //
+            f32(2.0) * XdotY /
+            // ------------------------ //
+            (f32(1.0e-6) + XdotY + sqrt(a2 + (f32(1.0) - a2) * XdotY * XdotY)) //
+            ;
+    }
+    var _GGX_GSchlick(var a, var XdotY) {
+        var k = a / f32(2.0);
+
+        return //
+            XdotY /
+            // ------------------------ //
+            (XdotY * (f32(1.0) - k) + k) //
+            ;
+    }
+    var DistributionGGX(var a2) {
+        var NdotH2 = NdotH * NdotH;
+        var denom  = (NdotH2 * (a2 - f32(1.0)) + f32(1.0));
+        denom      = PI * denom * denom;
+        return a2 / denom;
+    }
+    var ImportanceSampleGGX(var xi, var N, var roughness) {
+        var a         = roughness * roughness;
+        var phi       = f32(2.0) * PI * xi.x();
+        var cos_theta = sqrt((f32(1.0) - xi.y()) / (f32(1.0) + (a * a - f32(1.0)) * xi.y()));
+        var sin_theta = sqrt(f32(1.0) - cos_theta * cos_theta);
+        var H         = Make(f32x3Ty);
+        H.x()         = cos(phi) * sin_theta;
+        H.y()         = sin(phi) * sin_theta;
+        H.z()         = cos_theta;
+        var TBN       = GetTBN(N);
+        return normalize(TBN[u32(0)] * H.x() + TBN[u32(1)] * H.y() + TBN[u32(2)] * H.z());
+    }
+    static var G(var a, var NdotV, var NdotL) {
+        // Smith
+        // G(l,v,h)=G1(l)G1(v)
+        var a2 = a * a;
+        return _GGX_G(a2, NdotV) * _GGX_G(a2, NdotL);
+    }
+    var G(var r) { return G(r * r, NdotV, NdotL); }
+    var D(var r) {
+        // GGX (Trowbridge-Reitz)
+        var a  = r * r;
+        var a2 = a * a;
+        var f  = NdotH * NdotH * (a2 - f32(1.0)) + f32(1.0);
+        return a2 / (PI * f * f + f32(1.0e-6));
+    }
+    var fresnel(var f0 = f32x3_splat(0.04)) { return f0 + (f32x3_splat(1.0) - f0) * pow(saturate(f32(1.0) - VdotH), f32(5.0)); }
+    var eval(var r) { return NdotL * G(r) * D(r); }
+
+    // https://www.jcgt.org/published/0007/04/01/sampleGGXVNDF.h
+    // Copyright (c) 2018 Eric Heitz (the Authors).
+    //
+    // Permission is hereby granted, free of charge, to any person obtaining a copy
+    // of this software and associated documentation files (the "Software"), to deal
+    // in the Software without restriction, including without limitation the rights
+    // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    // copies of the Software, and to permit persons to whom the Software is
+    // furnished to do so, subject to the following conditions:
+    //
+    // The above copyright notice and this permission notice shall be included in
+    // all copies or substantial portions of the Software.
+    //
+    // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    // THE SOFTWARE.
+    static var SampleGGXVNDF(var Ve, var alpha_x, var alpha_y, var U1, var U2) {
+        // Input Ve: view direction
+        // Input alpha_x, alpha_y: roughness parameters
+        // Input U1, U2: uniform random numbers
+        // Output Ne: normal sampled with PDF D_Ve(Ne) = G1(Ve) * max(0, dot(Ve, Ne)) * D(Ne) / Ve.z
+        //
+        //
+        // Section 3.2: transforming the view direction to the hemisphere configuration
+        var Vh = normalize(make_f32x3(alpha_x * Ve.x(), alpha_y * Ve.y(), Ve.z()));
+        // Section 4.1: orthonormal basis (with special case if cross product is zero)
+        var lensq = Vh.x() * Vh.x() + Vh.y() * Vh.y();
+        var T1    = MakeIfElse(lensq > f32(0.0), make_f32x3(-Vh.y(), Vh.x(), 0) * rsqrt(lensq), var(f32x3(1.0, 0.0, 0.0)));
+        var T2    = cross(Vh, T1);
+        // Section 4.2: parameterization of the projected area
+        var       r    = sqrt(U1);
+        const f32 M_PI = f32(3.14159265358979);
+        var       phi  = f32(2.0) * M_PI * U2;
+        var       t1   = r * cos(phi);
+        var       t2   = r * sin(phi);
+        var       s    = f32(0.5) * (f32(1.0) + Vh.z());
+        t2             = (f32(1.0) - s) * sqrt(f32(1.0) - t1 * t1) + s * t2;
+        // Section 4.3: reprojection onto hemisphere
+        var Nh = t1 * T1 + t2 * T2 + sqrt(max(f32(0.0), f32(1.0) - t1 * t1 - t2 * t2)) * Vh;
+        // Section 3.4: transforming the normal back to the ellipsoid configuration
+        var Ne = normalize(make_f32x3(alpha_x * Nh.x(), alpha_y * Nh.y(), max(f32(0.0), Nh.z())));
+        return Ne;
+    }
+    static var SampleNormal(var view_direction, var normal, var roughness, var xi) {
+        var o = Make(f32x4Ty);
+        EmitIfElse(
+            roughness < f32(0.001), //
+            [&] {
+                o.xyz() = normal;
+                o.w()   = f32(1.0); // ? pdf of a nearly mirror like reflection
+            },                      //
+            [&] {
+                var tbn_transform      = transpose(GetTBN(normal));
+                var view_direction_tbn = mul(-view_direction, tbn_transform);
+                var a                  = roughness * roughness;
+                var a2                 = a * a;
+                var sampled_normal_tbn = SampleGGXVNDF(view_direction_tbn, a, a, xi.x(), xi.y());
+                var inv_tbn_transform  = transpose(tbn_transform);
+                o.xyz()                = mul(sampled_normal_tbn, inv_tbn_transform);
+
+                // pdf
+                var N        = normal;
+                var V        = -view_direction;
+                var H        = normalize(o.xyz() + V);
+                var NdotH    = dot(H, N);
+                var NdotH2   = NdotH * NdotH;
+                var NdotV    = dot(H, V);
+                var NdotL    = dot(N, o.xyz());
+                var g        = G(a, NdotV, NdotL);
+                var denom    = (NdotH2 * (a2 - f32(1.0)) + f32(1.0));
+                denom        = PI * denom * denom;
+                var D        = g * a2 / denom;
+                var jacobian = f32(4.0) * dot(V, N);
+                o.w()        = (D / jacobian); // pdf
+            });
+        return o;
+    }
+    static var SampleReflectionVector(var view_direction, var normal, var roughness, var xi) {
+        var o = Make(f32x4Ty);
+        EmitIfElse(
+            roughness < f32(0.001), //
+            [&] {
+                o.xyz() = reflect(view_direction, normal);
+                o.w()   = f32(1.0); // ? pdf of a nearly mirror like reflection
+            },                      //
+            [&] {
+                var tbn_transform           = transpose(GetTBN(normal));
+                var view_direction_tbn      = mul(-view_direction, tbn_transform);
+                var a                       = roughness * roughness;
+                var a2                      = a * a;
+                var sampled_normal_tbn      = SampleGGXVNDF(view_direction_tbn, a, a, xi.x(), xi.y());
+                var reflected_direction_tbn = reflect(-view_direction_tbn, sampled_normal_tbn);
+
+                var inv_tbn_transform = transpose(tbn_transform);
+                o.xyz()               = mul(reflected_direction_tbn, inv_tbn_transform);
+
+                // pdf
+                var N        = normal;
+                var V        = -view_direction;
+                var H        = normalize(o.xyz() + V);
+                var NdotH    = dot(H, N);
+                var NdotH2   = NdotH * NdotH;
+                var NdotV    = dot(H, V);
+                var NdotL    = dot(N, o.xyz());
+                var g        = G(a, NdotV, NdotL);
+                var denom    = (NdotH2 * (a2 - f32(1.0)) + f32(1.0));
+                denom        = PI * denom * denom;
+                var D        = g * a2 / denom;
+                var jacobian = f32(4.0) * dot(V, N);
+                o.w()        = (D / jacobian); // pdf
+            });
+        return o;
+    }
+};
+struct PingPong {
+    u32 ping = u32(0);
+    u32 pong = u32(0);
+
+    void Next() {
+        ping = u32(1) - ping;
+        pong = u32(1) - ping;
+    }
+};
+#    if defined(__dxgiformat_h__)
+static u32 GetBytesPerPixel(DXGI_FORMAT format) {
+    switch (format) {
+    case DXGI_FORMAT_R8_TYPELESS:
+    case DXGI_FORMAT_R8_UNORM:
+    case DXGI_FORMAT_R8_UINT:
+    case DXGI_FORMAT_R8_SNORM:
+    case DXGI_FORMAT_R8_SINT:
+    case DXGI_FORMAT_A8_UNORM: //
+        return u32(1);
+    case DXGI_FORMAT_R8G8_TYPELESS:
+    case DXGI_FORMAT_R8G8_UNORM:
+    case DXGI_FORMAT_R8G8_UINT:
+    case DXGI_FORMAT_R8G8_SNORM:
+    case DXGI_FORMAT_R8G8_SINT:
+    case DXGI_FORMAT_R16_TYPELESS:
+    case DXGI_FORMAT_R16_FLOAT:
+    case DXGI_FORMAT_D16_UNORM:
+    case DXGI_FORMAT_R16_UNORM:
+    case DXGI_FORMAT_R16_UINT:
+    case DXGI_FORMAT_R16_SNORM:
+    case DXGI_FORMAT_R16_SINT: //
+        return u32(2);
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+    case DXGI_FORMAT_R10G10B10A2_UINT:
+    case DXGI_FORMAT_R11G11B10_FLOAT:
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case DXGI_FORMAT_R8G8B8A8_UINT:
+    case DXGI_FORMAT_R8G8B8A8_SNORM:
+    case DXGI_FORMAT_R8G8B8A8_SINT:
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8X8_UNORM:
+    case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    case DXGI_FORMAT_R16G16_TYPELESS:
+    case DXGI_FORMAT_R16G16_FLOAT:
+    case DXGI_FORMAT_R16G16_UNORM:
+    case DXGI_FORMAT_R16G16_UINT:
+    case DXGI_FORMAT_R16G16_SNORM:
+    case DXGI_FORMAT_R16G16_SINT:
+    case DXGI_FORMAT_R32_TYPELESS:
+    case DXGI_FORMAT_D32_FLOAT:
+    case DXGI_FORMAT_R32_FLOAT:
+    case DXGI_FORMAT_R32_UINT:
+    case DXGI_FORMAT_R32_SINT: //
+        return u32(4);
+    case DXGI_FORMAT_BC1_TYPELESS:
+    case DXGI_FORMAT_BC1_UNORM:
+    case DXGI_FORMAT_BC1_UNORM_SRGB:
+    case DXGI_FORMAT_BC4_TYPELESS:
+    case DXGI_FORMAT_BC4_UNORM:
+    case DXGI_FORMAT_BC4_SNORM:
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case DXGI_FORMAT_R16G16B16A16_UNORM:
+    case DXGI_FORMAT_R16G16B16A16_UINT:
+    case DXGI_FORMAT_R16G16B16A16_SNORM:
+    case DXGI_FORMAT_R16G16B16A16_SINT: //
+        return u32(8);
+    case DXGI_FORMAT_BC2_TYPELESS:
+    case DXGI_FORMAT_BC2_UNORM:
+    case DXGI_FORMAT_BC2_UNORM_SRGB:
+    case DXGI_FORMAT_BC3_TYPELESS:
+    case DXGI_FORMAT_BC3_UNORM:
+    case DXGI_FORMAT_BC3_UNORM_SRGB:
+    case DXGI_FORMAT_BC5_TYPELESS:
+    case DXGI_FORMAT_BC5_UNORM:
+    case DXGI_FORMAT_BC5_SNORM:
+    case DXGI_FORMAT_BC6H_TYPELESS:
+    case DXGI_FORMAT_BC6H_UF16:
+    case DXGI_FORMAT_BC6H_SF16:
+    case DXGI_FORMAT_BC7_TYPELESS:
+    case DXGI_FORMAT_BC7_UNORM:
+    case DXGI_FORMAT_BC7_UNORM_SRGB:
+    case DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case DXGI_FORMAT_R32G32B32A32_TYPELESS: //
+        return u32(16);
+    case DXGI_FORMAT_R32G32B32_FLOAT:
+    case DXGI_FORMAT_R32G32B32_TYPELESS: //
+        return u32(12);
+    default: break;
+    }
+    SJIT_TRAP;
+}
+static BasicType GetBasicType(DXGI_FORMAT fmt) {
+    switch (fmt) {
+    case DXGI_FORMAT_R32G32B32A32_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R32G32B32A32_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R32G32B32A32_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R32G32B32A32_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R32G32B32_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R32G32B32_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R32G32B32_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R32G32B32_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16G16B16A16_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16G16B16A16_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R16G16B16A16_SNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16G16B16A16_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R32G32_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R32G32_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R32G32_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R32G32_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R32G8X24_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_X32_TYPELESS_G8X24_UINT: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R10G10B10A2_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R10G10B10A2_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R11G11B10_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R8G8B8A8_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R8G8B8A8_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R8G8B8A8_SNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R8G8B8A8_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R16G16_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R16G16_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16G16_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16G16_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R16G16_SNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16G16_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R32_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_D32_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R32_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R32_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R32_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R24G8_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_D24_UNORM_S8_UINT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R24_UNORM_X8_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_X24_TYPELESS_G8_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R8G8_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R8G8_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R8G8_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R8G8_SNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R8G8_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R16_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R16_FLOAT: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_D16_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R16_SNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R16_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_R8_TYPELESS: return BASIC_TYPE_UNKNOWN;
+    case DXGI_FORMAT_R8_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R8_UINT: return BASIC_TYPE_U32;
+    case DXGI_FORMAT_R8_SNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R8_SINT: return BASIC_TYPE_I32;
+    case DXGI_FORMAT_A8_UNORM: return BASIC_TYPE_F32;
+    case DXGI_FORMAT_R1_UNORM: return BASIC_TYPE_F32;
+    default: return BASIC_TYPE_UNKNOWN;
+    }
+}
+#    endif // defined(__dxgiformat_h__)
+
+#    define GFX_JIT_MAKE_RESOURCE(name, type) var name = ResourceAccess(Resource::Create(type, #name))
+#    define GFX_JIT_MAKE_GLOBAL_RESOURCE(name, type) static var name = ResourceAccess(Resource::Create(type, #name))
+#    define GFX_JIT_MAKE_GLOBAL_RESOURCE_ARRAY(name, type) static var name = ResourceAccess(Resource::CreateArray(Resource::Create(type, "elem_" #name), #name))
+
+static u32 LSB(u32 v) {
+    static const int MultiplyDeBruijnBitPosition[32] = {0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9};
+    return u32(MultiplyDeBruijnBitPosition[((uint32_t)((v & -v) * 0x077CB531U)) >> 27]);
+}
+
+// clang-format off
+#define TRILINEAR_WEIGHTS(frac_rp) \
+var trilinear_weights[2][2][2] = {                                                              \
+    {                                                                                           \
+                                                                                                \
+        {                                                                                       \
+            (f32(1.0) - frac_rp.x()) * (f32(1.0) - frac_rp.y()) * (f32(1.0) - frac_rp.z()),     \
+            (frac_rp.x())            * (f32(1.0) - frac_rp.y()) * (f32(1.0) - frac_rp.z())      \
+        },                                                                                      \
+        {                                                                                       \
+            (f32(1.0) - frac_rp.x()) * (frac_rp.y())             * (f32(1.0) - frac_rp.z()),    \
+            (frac_rp.x())            * (frac_rp.y())             * (f32(1.0) - frac_rp.z())     \
+        },                                                                                      \
+    },                                                                                          \
+    {                                                                                           \
+                                                                                                \
+        {                                                                                       \
+            (f32(1.0) - frac_rp.x()) * (f32(1.0) - frac_rp.y()) * (frac_rp.z()),                \
+            (frac_rp.x())            * (f32(1.0) - frac_rp.y()) * (frac_rp.z())                 \
+        },                                                                                      \
+        {                                                                                       \
+            (f32(1.0) - frac_rp.x()) * (frac_rp.y())            * (frac_rp.z()),                \
+            (frac_rp.x())            * (frac_rp.y())            * (frac_rp.z())                 \
+        },                                                                                      \
+    },                                                                                          \
+};
+        
+#define BILINEAR_WEIGHTS(frac_uv)                                 \
+    var bilinear_weights[2][2] =                                  \
+    {                                                             \
+            {(f32(1.0) - frac_uv.x()) * (f32(1.0) - frac_uv.y()), \
+            (frac_uv.x()) * (f32(1.0) - frac_uv.y())},            \
+            {(f32(1.0) - frac_uv.x()) * (frac_uv.y()),            \
+            (frac_uv.x()) * (frac_uv.y())},                       \
+    };
+
+// clang-format on
+
+// https://www.shadertoy.com/view/4dsSzr
+
+static ValueExpr hueGradient(ValueExpr t) {
+    sjit_assert(t->InferType() == f32Ty);
+    ValueExpr p = abs(frac(t["xxx"] + f32x3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * f32(6.0) - f32x3_splat(3.0));
+    return clamp(p - f32x3_splat(1.0), f32x3_splat(0.0), f32x3_splat(1.0));
+}
+
+// https://www.shadertoy.com/view/ltB3zD
+
+// Gold Noise 2015 dcerisano@standard3d.com
+// - based on the Golden Ratio
+// - uniform normalized distribution
+// - fastest static noise generator function (also runs at low precision)
+// - use with indicated fractional seeding method
+
+static const f32 PHI = f32(1.61803398874989484820459); // Golden Ratio
+
+static ValueExpr gold_noise(ValueExpr xy, ValueExpr seed) {
+    sjit_assert(xy->InferType() == f32x2Ty);
+    sjit_assert(seed->InferType() == f32Ty);
+    return frac(tan(length(xy * PHI - xy) * seed) * xy.x());
+}
+static ValueExpr random_rgb(ValueExpr x) {
+    sjit_assert(x->InferType() == f32Ty);
+    return hueGradient(                                                                                                                                  //
+        gold_noise(make_f32x2(frac(cos(abs(x) * f32(53.932) + f32(32.321))), frac(sin(-abs(x) * PHI * f32(37.254) + f32(17.354)))), f32(439753.1235389)) //
+    );
+}
+
+static SharedPtr<Type> Ray_Ty     = Type::Create("Ray", {
+                                                        {"o", f32x3Ty},   //
+                                                        {"d", f32x3Ty},   //
+                                                        {"ird", f32x3Ty}, //
+                                                    });
+static SharedPtr<Type> RayDesc_Ty = Type::Create("RayDesc",
+                                                 {
+                                                     {"Direction", f32x3Ty}, //
+                                                     {"Origin", f32x3Ty},    //
+                                                     {"TMin", f32Ty},        //
+                                                     {"TMax", f32Ty},        //
+                                                 },
+                                                 /* builtin */ true);
+static ValueExpr       GenDiffuseRay(ValueExpr p, ValueExpr n, ValueExpr xi) {
+    using var        = ValueExpr;
+    var TBN          = GetTBN(n);
+    var sint         = sqrt(xi["y"]);
+    var cost         = sqrt(f32(1.0) - xi["y"]);
+    var M_PI         = f32(3.14159265358979);
+    var local_coords = make_f32x3(cost * cos(xi["x"] * M_PI * f32(2.0)), cost * sin(xi["x"] * M_PI * f32(2.0)), sint);
+    var d            = normalize(TBN[u32(2)] * local_coords["z"] + TBN[u32(0)] * local_coords["x"] + TBN[u32(1)] * local_coords["y"]);
+    var r            = Zero(Ray_Ty);
+    r["o"]           = p + n * f32(1.0e-3);
+    r["d"]           = d;
+    r["ird"]         = f32x3(1.0, 1.0, 1.0) / r["d"];
+    return r;
+}
+static var EncodeGBuffer32Bits(var N, var P, var xi, var camera_pos) {
+    var on_16_bits = Octahedral::EncodeNormalTo16Bits(N);
+    var dist       = length(P - camera_pos);
+    var idist      = f32(1.0) / (f32(1.0) + dist);
+    idist += (xi * f32(2.0) - f32(1.0)) * f32(1.0e-4);
+    var idist_16_bits = idist.ToF16().f16_to_u32();
+    var pack          = on_16_bits | (idist_16_bits << u32(16));
+    return pack;
+}
+static SharedPtr<Type> GBuffer_Ty = Type::Create("GBuffer", {
+                                                                {"P", f32x3Ty}, //
+                                                                {"N", f32x3Ty}, //
+                                                            });
+static var             DecodeGBuffer32Bits(var camera_ray, var pack, var xi) {
+    var on_16_bits    = pack & u32(0xffff);
+    var idist_16_bist = (pack >> u32(16)) & u32(0xffff);
+    var N             = Octahedral::DecodeNormalFrom16Bits(on_16_bits);
+    var idist         = idist_16_bist.u32_to_f16().ToF32();
+    idist += (xi * f32(2.0) - f32(1.0)) * f32(1.0e-4);
+    var dist     = f32(1.0) / idist - f32(1.0);
+    var P        = camera_ray["o"] + camera_ray["d"] * dist;
+    var gbuffer  = Zero(GBuffer_Ty);
+    gbuffer["P"] = P;
+    gbuffer["N"] = N;
+    return gbuffer;
+}
+static SharedPtr<Type> Hit_Ty = Type::Create("Hit", {
+                                                        {"W", f32x3Ty},  //
+                                                        {"N", f32x3Ty},  //
+                                                        {"UV", f32x2Ty}, //
+                                                    });
+// Src: Hacker's Delight, Henry S. Warren, 2001
+static var RadicalInverse_VdC(var bits) {
+    bits = (bits << u32(16)) | (bits >> u32(16));
+    bits = ((bits & u32(0x55555555)) << u32(1)) | ((bits & u32(0xAAAAAAAA)) >> u32(1));
+    bits = ((bits & u32(0x33333333)) << u32(2)) | ((bits & u32(0xCCCCCCCC)) >> u32(2));
+    bits = ((bits & u32(0x0F0F0F0F)) << u32(4)) | ((bits & u32(0xF0F0F0F0)) >> u32(4));
+    bits = ((bits & u32(0x00FF00FF)) << u32(8)) | ((bits & u32(0xFF00FF00)) >> u32(8));
+    return bits.ToF32() * f32(2.3283064365386963e-10); // / 0x100000000
+}
+static var Hammersley(var i, var N) { return make_f32x2(i.ToF32() / N.ToF32(), RadicalInverse_VdC(i)); }
+var        pcg(var v) {
+    var state = v * u32(747796405) + u32(2891336453);
+    var word  = ((state >> ((state >> u32(28)) + u32(4))) ^ state) * u32(277803737);
+    return (word >> u32(22)) ^ word;
+}
+// xxhash (https://github.com/Cyan4973/xxHash)
+//   From https://www.shadertoy.com/view/Xt3cDn
+static var xxhash32(var p) {
+    const u32 PRIME32_2 = 2246822519U, PRIME32_3 = 3266489917U;
+    const u32 PRIME32_4 = 668265263U, PRIME32_5 = 374761393U;
+    var       h32 = p + PRIME32_5;
+    h32           = PRIME32_4 * ((h32 << 17) | (h32 >> (32 - 17)));
+    h32           = PRIME32_2 * (h32 ^ (h32 >> 15));
+    h32           = PRIME32_3 * (h32 ^ (h32 >> 13));
+    return h32 ^ (h32 >> 16);
+}
+
+static u32                halton_sample_count = u32(15);
+static std::vector<i32x2> halton_samples      = {i32x2(0, 1),   //
+                                                 i32x2(-2, 1),  //
+                                                 i32x2(2, -3),  //
+                                                 i32x2(-3, 0),  //
+                                                 i32x2(1, 2),   //
+                                                 i32x2(-1, -2), //
+                                                 i32x2(3, 0),   //
+                                                 i32x2(-3, 3),  //
+                                                 i32x2(0, -3),  //
+                                                 i32x2(-1, -1), //
+                                                 i32x2(2, 1),   //
+                                                 i32x2(-2, -2), //
+                                                 i32x2(1, 0),   //
+                                                 i32x2(0, 2),   //
+                                                 i32x2(3, -1)};
+static void               Init_LDS_16x16(var &lds, std::function<var(var)> init_fn) {
+    var  tid        = Input(IN_TYPE_DISPATCH_THREAD_ID)["xy"];
+    var  gid        = Input(IN_TYPE_GROUP_THREAD_ID)["xy"];
+    auto linear_idx = [](var xy) { return (xy.x().ToI32() + xy.y().ToI32() * i32(16)).ToU32(); };
+    var  group_tid  = u32(8) * (tid / u32(8));
+    xfor(2) {
+        yfor(2) {
+            var dst_lds_cood = gid.xy().ToI32() * i32(2) + i32x2(x, y);
+            var src_coord    = group_tid.ToI32() - i32x2(4, 4) + gid.xy().ToI32() * i32(2) + i32x2(x, y);
+            var val          = init_fn(src_coord);
+            lds.Store(linear_idx(dst_lds_cood.ToU32()), val);
+        }
+    }
+}
+static var Gaussian(var x) { return exp(-x * x * f32(0.5)); }
 } // namespace SJIT
 
 #endif // JIT_HPP
