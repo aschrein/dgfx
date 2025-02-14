@@ -5234,7 +5234,7 @@ bool BlockMetadata_TLSF::CreateAllocationRequest(
     UINT64 smallSizeStep = SMALL_BUFFER_SIZE / (IsVirtual() ? 1 << SECOND_LEVEL_INDEX : 4);
     if (allocSize > SMALL_BUFFER_SIZE)
     {
-        sizeForNextList += (1ULL << (BitScanMSB(allocSize) - SECOND_LEVEL_INDEX));
+        sizeForNextList += (1ULL << (BitScanMSB((UINT32)allocSize) - SECOND_LEVEL_INDEX));
     }
     else if (allocSize > SMALL_BUFFER_SIZE - smallSizeStep)
         sizeForNextList = SMALL_BUFFER_SIZE + 1;
@@ -5647,7 +5647,7 @@ void BlockMetadata_TLSF::WriteAllocationInfoToJson(JsonWriter& json) const
 UINT8 BlockMetadata_TLSF::SizeToMemoryClass(UINT64 size) const
 {
     if (size > SMALL_BUFFER_SIZE)
-        return BitScanMSB(size) - MEMORY_CLASS_SHIFT;
+        return BitScanMSB((UINT32)size) - MEMORY_CLASS_SHIFT;
     return 0;
 }
 

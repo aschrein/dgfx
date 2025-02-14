@@ -1,0 +1,34 @@
+{
+    "terminal.integrated.profiles.windows": {
+        "StartBatProfile": {
+            "path": "C:\\Windows\\System32\\cmd.exe",
+            "args": [
+                "/k",
+                "${workspaceFolder}\\start.bat"
+            ]
+        }
+    },
+    "files.associations": {
+        "*.spice": "spice",
+        "*.toml": "toml",
+        "*.hlsl": "hlsl",
+        "*.comp": "hlsl",
+        "*.frag": "hlsl",
+        "*.vert": "hlsl"
+    },
+    "[hlsl]": {
+        "editor.defaultFormatter": "seaube.clangformat"
+        // "editor.defaultFormatter": "seaube.clangformat"
+    },
+    "editor.defaultFormatter": "seaube.clangformat",
+    // "editor.defaultFormatter": "xaver.clang-format",
+    // "editor.defaultFormatter": "xaver.clang-format",
+    // "clang-format.executable.windows": "${workspaceFolder}\\3rdparty\\clang-format.exe",
+    // "clangFormat.executable.windows": "${workspaceFolder}\\3rdparty\\clang-format.exe",
+    "editor.formatOnSave": true,
+    "github.copilot.editor.enableAutoCompletions": true,
+    "terminal.integrated.defaultProfile.windows": "StartBatProfile",
+    "[cpp]": {
+        "editor.defaultFormatter": "seaube.clangformat"
+    }
+}

@@ -24,6 +24,7 @@
 #    define JIT_HPP
 
 #    pragma warning(disable : 4244)
+#    pragma warning(disable : 4996)
 
 #    undef min
 #    undef max
@@ -146,14 +147,14 @@ static constexpr float INV_TWO_PI          = float(0.1591549);
 static constexpr float INV_FOUR_PI         = float(0.0795775);
 static constexpr float DIELECTRIC_SPECULAR = float(0.04);
 
-static f32x4 f32x4_splat(f32 a) { return f32x4(a, a, a, a); }
-static f32x3 f32x3_splat(f32 a) { return f32x3(a, a, a); }
-static f32x2 f32x2_splat(f32 a) { return f32x2(a, a); }
-static u32x4 u32x4_splat(u32 a) { return u32x4(a, a, a, a); }
-static u32x3 u32x3_splat(u32 a) { return u32x3(u32(a), u32(a), u32(a)); }
-static f32x2 f32x2_splat(f64 a) { return f32x2(f32(a), f32(a)); }
-static f32x3 f32x3_splat(f64 a) { return f32x3(f32(a), f32(a), f32(a)); }
-static f32x4 f32x4_splat(f64 a) { return f32x4(f32(a), f32(a), f32(a), f32(a)); }
+//static f32x4 f32x4_splat(f32 a) { return f32x4(a, a, a, a); }
+//static f32x3 f32x3_splat(f32 a) { return f32x3(a, a, a); }
+//static f32x2 f32x2_splat(f32 a) { return f32x2(a, a); }
+//static u32x4 u32x4_splat(u32 a) { return u32x4(a, a, a, a); }
+//static u32x3 u32x3_splat(u32 a) { return u32x3(u32(a), u32(a), u32(a)); }
+//static f32x2 f32x2_splat(f64 a) { return f32x2(f32(a), f32(a)); }
+//static f32x3 f32x3_splat(f64 a) { return f32x3(f32(a), f32(a), f32(a)); }
+//static f32x4 f32x4_splat(f64 a) { return f32x4(f32(a), f32(a), f32(a), f32(a)); }
 
 template <typename T>
 class SharedPtr {
@@ -3749,7 +3750,7 @@ static BasicType GetBasicType(DXGI_FORMAT fmt) {
 
 static u32 LSB(u32 v) {
     static const int MultiplyDeBruijnBitPosition[32] = {0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9};
-    return u32(MultiplyDeBruijnBitPosition[((uint32_t)((v & -v) * 0x077CB531U)) >> 27]);
+    return u32(MultiplyDeBruijnBitPosition[((uint32_t)((v & (u32)(-(i32)v)) * 0x077CB531U)) >> 27]);
 }
 
 // clang-format off

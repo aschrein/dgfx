@@ -1,11 +1,13 @@
-# Another Toy Framework(Like a shadertoy for myself with weird experiments)
+# Toy Graphics Framework
 
-Put something in the experiments folder
+
+## Setup
+Install git, [git-lfs](https://git-lfs.com/), visual studio
 
 ```sh
-$ cmake -G"Visual Studio 17 2022" -T ClangCl ..
+$ start.bat
+$ cmake -G"Visual Studio 17 2022" ..
 ```
-
 
 ![Figure 1](/images/s0.png)
 

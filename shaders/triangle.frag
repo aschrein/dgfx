@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "common.h"
+#include "dgfx/common.h"
 
 Texture2D<float4> g_input;
 Texture2D<float4> g_ui;

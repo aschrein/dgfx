@@ -1,24 +1,5 @@
 Language:        Cpp
 BasedOnStyle: LLVM
-AccessModifierOffset: -4 # -2
-AlignAfterOpenBracket: Align
-AlignConsecutiveAssignments: false
-AlignConsecutiveDeclarations: false
-AlignEscapedNewlines: Right
-AlignOperands:   true
-AlignTrailingComments: true
-AllowAllParametersOfDeclarationOnNextLine: true
-AllowShortBlocksOnASingleLine: false
-AllowShortCaseLabelsOnASingleLine: false
-AllowShortFunctionsOnASingleLine: All
-AllowShortIfStatementsOnASingleLine: false
-AllowShortLoopsOnASingleLine: false
-AlwaysBreakAfterDefinitionReturnType: None
-AlwaysBreakAfterReturnType: None
-AlwaysBreakBeforeMultilineStrings: false
-AlwaysBreakTemplateDeclarations: true # false
-BinPackArguments: true
-BinPackParameters: true
 BraceWrapping:   
   AfterClass:      true # false
   AfterControlStatement: true # false
@@ -38,10 +19,7 @@ BraceWrapping:
 AccessModifierOffset: '-4'
 AlignConsecutiveAssignments: 'true'
 AlignOperands: 'true'
-BinPackParameters: 'false'
-BinPackArguments: 'false'
 AlignAfterOpenBracket: 'true'
-AlignOperands: 'true'
 AlignConsecutiveDeclarations: 'true'
 AlignTrailingComments: 'true'
 AllowShortCaseLabelsOnASingleLine: 'true'

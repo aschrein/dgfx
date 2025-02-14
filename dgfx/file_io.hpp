@@ -46,26 +46,6 @@ static void write_f32x4_to_pfm(const char *file_name, void const *src_data, u64 
     fclose(file);
 }
 
-static std::string read_file(char const *filename) {
-    u64   size      = 0;
-    FILE *text_file = NULL;
-    int   err       = fopen_s(&text_file, filename, "rb");
-    if (err) return "";
-    if (text_file == NULL) return "";
-    fseek(text_file, 0, SEEK_END);
-    long fsize = ftell(text_file);
-    fseek(text_file, 0, SEEK_SET);
-    size       = (u64)fsize;
-    char *data = (char *)malloc((u64)fsize + 1);
-    if (data == NULL) return "";
-    fread(data, 1, (u64)fsize, text_file);
-    data[size] = '\0';
-    fclose(text_file);
-    std::string out = data;
-    free(data);
-    return out;
-}
-
 void write_f32x4_png(char const *filename, void const *src_data, u64 width, u64 height, u64 pitch = u64(-1));
 
 #endif // FILE_IO_HPP

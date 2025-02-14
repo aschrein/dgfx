@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "common.h"
+#include "dgfx/common.h"
 
 f32x4x4 g_viewproj;
 

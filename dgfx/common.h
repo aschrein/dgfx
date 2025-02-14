@@ -128,17 +128,13 @@ static f32 asf32(u32 a) {
 // SRC:
 // https://grouse.github.io/posts/defer.html
 // https://www.gingerbill.org/article/2015/08/19/defer-in-cpp/
-template <typename F>
-struct privDefer {
+template <typename F> struct privDefer {
     F f;
     privDefer(F f) : f(f) {}
     ~privDefer() { f(); }
 };
 
-template <typename F>
-privDefer<F> defer_func(F f) {
-    return privDefer<F>(f);
-}
+template <typename F> privDefer<F> defer_func(F f) { return privDefer<F>(f); }
 
 #            define DEFER_1(x, y) x##y
 #            define DEFER_2(x, y) DEFER_1(x, y)
@@ -191,20 +187,15 @@ STATIC_FUNCTION f32     rsqrt(f32 a) { return f32(1.0) / sqrt(a); }
 STATIC_FUNCTION f32     dot2(f32x3 a) { return dot(a, a); }
 
 namespace std {
-template <>
-struct hash<std::pair<u16, u16>> {
+template <> struct hash<std::pair<u16, u16>> {
     u64 operator()(std::pair<u16, u16> const &item) const { return hash<u64>()((u64)item.first + hash<u64>()((u64)item.second)); }
 };
-template <>
-struct hash<std::pair<u32, u32>> {
+template <> struct hash<std::pair<u32, u32>> {
     u64 operator()(std::pair<u32, u32> const &item) const { return hash<u64>()((u64)item.first + hash<u64>()((u64)item.second)); }
 };
 }; // namespace std
 
-template <typename T, typename K>
-static bool contains(T const &t, K const &k) {
-    return t.find(k) != t.end();
-}
+template <typename T, typename K> static bool contains(T const &t, K const &k) { return t.find(k) != t.end(); }
 
 #    endif // #if defined(__HLSL_VERSION)
 
@@ -581,5 +572,29 @@ struct Octahedral {
         return normalize(n);
     }
 };
+
+#    if !defined(__HLSL_VERSION)
+
+static std::string read_file(char const *filename) {
+    u64   size      = 0;
+    FILE *text_file = NULL;
+    int   err       = fopen_s(&text_file, filename, "rb");
+    if (err) return "";
+    if (text_file == NULL) return "";
+    fseek(text_file, 0, SEEK_END);
+    long fsize = ftell(text_file);
+    fseek(text_file, 0, SEEK_SET);
+    size       = (u64)fsize;
+    char *data = (char *)malloc((u64)fsize + 1);
+    if (data == NULL) return "";
+    fread(data, 1, (u64)fsize, text_file);
+    data[size] = '\0';
+    fclose(text_file);
+    std::string out = data;
+    free(data);
+    return out;
+}
+
+#    endif // !defined(__HLSL_VERSION)
 
 #endif // !deifned(COMMON_H)

@@ -20,6 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include "utils.hpp"
+#include <pugixml.hpp>
+
 #if !defined(XML_CONFIG_HPP)
 #    define XML_CONFIG_HPP
 
@@ -28,7 +31,7 @@
             x = attr.as_float();                                                                                                                                                   \
         }
 
-#    define XML_WRITE_F32(x) fprintf(file, #    x "=\"%f\" ", x);
+#    define XML_WRITE_F32(x) fprintf(file, #x "=\"%f\" ", x);
 
 struct Value {
     std::string name;

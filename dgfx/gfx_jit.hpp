@@ -389,8 +389,8 @@ enum ResourceType {
     RESOURCE_TYPE_F32x4,
     RESOURCE_TYPE_F32x4x4,
 };
-#    pragma clang diagnostic push
-#    pragma clang diagnostic ignored "-Wreorder-ctor"
+//#    pragma clang diagnostic push
+//#    pragma clang diagnostic ignored "-Wreorder-ctor"
 struct ResourceSlot {
     ResourceType             type          = RESOURCE_TYPE_UNKNOWN;
     GfxTexture               texture       = {};
@@ -449,7 +449,7 @@ struct ResourceSlot {
     ResourceSlot(f32x4 _v) : v_f32x4(_v), type(RESOURCE_TYPE_F32x4) {}
     ResourceSlot(f32x4x4 _v) : v_f32x4x4(_v), type(RESOURCE_TYPE_F32x4x4) {}
 };
-#    pragma clang diagnostic pop
+//#    pragma clang diagnostic pop
 
 static SharedPtr<Type> Material_Ty = Type::Create("Material", {
                                                                   {"albedo", f32x4Ty},                //
@@ -586,7 +586,7 @@ struct GPUKernel {
         switch (slot.type) {
         case RESOURCE_TYPE_TEXTURE: {
             if (slot.textures.size())
-                gfxProgramSetParameter(gfx, program, _name, slot.textures.data(), slot.textures.size());
+                gfxProgramSetParameter(gfx, program, _name, slot.textures.data(), (u32)slot.textures.size());
             else
                 gfxProgramSetParameter(gfx, program, _name, slot.texture);
         } break;
@@ -753,8 +753,16 @@ static GPUKernel                    CompileGlobalModule(GfxContext gfx, String _
             sprintf(buf, ".shader_cache/%s.hlsl", _name.c_str());
             std::ofstream file(buf);
             if (file.is_open()) {
+                file << "// AUTOGENERATRED DO NOT EDIT\n";
                 file << GetGlobalModule().Finalize();
                 file.close();
+            }
+
+            // Launch clang-format.exe
+            {
+                char buf[0x100];
+                sprintf(buf, "clang-format.exe -i .shader_cache/%s.hlsl", _name.c_str());
+                system(buf);
             }
         }
         /*{
@@ -1528,7 +1536,7 @@ static var TraceGGX(var N, var P, var roughness, var xi) {
     var V                 = normalize(P - g_camera_pos);
     var ray               = SJIT::GGXHelper::SampleReflectionVector(V, N, roughness, xi);
     var ray_desc          = Zero(RayDesc_Ty);
-    ray_desc["Direction"] = ray;
+    ray_desc["Direction"] = ray.xyz();
     ray_desc["Origin"]    = P + N * f32(1.0e-3);
     ray_desc["TMin"]      = f32(1.0e-3);
     ray_desc["TMax"]      = f32(1.0e6);

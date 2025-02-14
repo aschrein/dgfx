@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "common.h"
+#include "dgfx/common.h"
 #include "material.h"
 
 // RWTexture2D<f32x4>              g_primary_gbuffer;
@@ -214,20 +214,6 @@ Hit Traverse(Ray r, u32 exclude_idx = u32(-1), u32 include_idx = u32(-1)) {
     hit.t             = cur_t;
     hit.primitive_idx = hit_primitive_idx;
     return hit;
-}
-Ray GenDiffuseRay(f32x3 p, f32x3 n, f32x2 xi) {
-    float3x3 TBN          = GetTBN(n);
-    f32      sint         = sqrt(xi.y);
-    f32      cost         = sqrt(f32(1.0) - sint * sint);
-    f32      M_PI         = f32(3.14159265358979);
-    f32x3    local_coords = f32x3(cost * cos(xi.x * M_PI * f32(2.0)), cost * sin(xi.x * M_PI * f32(2.0)), sint);
-    f32x3    d            = normalize(TBN[2] * local_coords.z + TBN[0] * local_coords.x + TBN[1] * local_coords.y);
-    Ray      r;
-    r.o   = p + n * f32(5.0e-3);
-    r.d   = d;
-    r.ird = f32(1.0) / r.d;
-
-    return r;
 }
 f32x2 SampleBakedNoise(uint2 pixel, int noise_offset) {
     f32x2 xi = g_noise_texture[pixel.xy & u32(127)].xy;

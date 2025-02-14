@@ -26,6 +26,7 @@
 #    include <unordered_map>
 
 #    include "font.hpp"
+#    include "gfx_utils.hpp"
 #    include "utils.hpp"
 
 // https://github.com/aschrein/VulkII/blob/master/include/scene.hpp

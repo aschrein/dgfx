@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.2)
 
-project(main)
+project(dgfx)
 
 add_subdirectory(3rdparty/gfx)
 add_subdirectory(3rdparty/pugixml ${CMAKE_CURRENT_BINARY_DIR}/pugixml)
@@ -144,6 +144,8 @@ function(add_exe target_name source_file)
                 ${DGFX_DIR}/3rdparty/embree/bin/tbb12.dll
                         ${CMAKE_CURRENT_BINARY_DIR}/RelWithDebInfo/tbb12.dll)
 
+        
+        set_target_properties(${target_name} PROPERTIES FOLDER "experiments")
 endfunction()
 
 if (IS_DIRECTORY "${DGFX_DIR}/experiments")
@@ -153,3 +155,18 @@ else()
 endif()
 
 add_exe(jit_test src/jit_test.cpp)
+
+# Enable folders for Visual Studio
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMakeTargets")
+# Move third party libraries to a separate folder
+set_target_properties(gfx PROPERTIES FOLDER "ThirdParty")
+set_target_properties(astcenc-avx2-static PROPERTIES FOLDER "ThirdParty")
+set_target_properties(ktx PROPERTIES FOLDER "ThirdParty")
+set_target_properties(ktx_read PROPERTIES FOLDER "ThirdParty")
+set_target_properties(ktx_version PROPERTIES FOLDER "ThirdParty")
+set_target_properties(obj_basisu_cbind PROPERTIES FOLDER "ThirdParty")
+set_target_properties(objUtil PROPERTIES FOLDER "ThirdParty")
+set_target_properties(pugixml-static PROPERTIES FOLDER "ThirdParty")
+set_target_properties(tinyobjloader PROPERTIES FOLDER "ThirdParty")
+set_target_properties(uninstall PROPERTIES FOLDER "ThirdParty")

@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "common.h"
+#include "dgfx/common.h"
 
 f32x2 glyph_uv_size;
 f32x2 glyph_size;
